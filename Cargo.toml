@@ -1,0 +1,37 @@
+[package]
+name = "rady"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Evidence-gated coding and dependency review agent"
+license = "MIT"
+readme = "README.md"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
+getrandom = "0.3"
+latex2mathml = "0.2"
+nix = { version = "0.30", features = ["fs", "process", "signal"] }
+pulldown-cmark = "0.13"
+regex = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tempfile = "3.20"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true
+
+[lints.rust]
+unsafe_code = "deny"
+
+[[bin]]
+name = "rady"
+path = "src/main.rs"
+
+[[bin]]
+name = "dependasolver"
+path = "src/bin/dependasolver.rs"
