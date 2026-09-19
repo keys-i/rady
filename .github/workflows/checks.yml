@@ -21,4 +21,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - run: python3 -m unittest discover -s tests -v
+      - name: Install Rust
+        run: |
+          rustup set profile minimal
+          rustup toolchain install stable --component clippy,rustfmt
+      - name: Check formatting
+        run: cargo fmt --check
+      - name: Lint
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+      - name: Test
+        run: cargo test --all-targets --no-fail-fast --locked
+      - name: Build release
+        run: cargo build --release --locked
