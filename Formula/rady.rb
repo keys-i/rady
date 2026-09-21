@@ -7,9 +7,10 @@ class Rady < Formula
   license "MIT"
 
   depends_on "rust" => :build
+  deny_network_access!
 
   def fetch
-    system "cargo", "fetch", *std_cargo_fetch_args
+    system "cargo", "fetch", "--locked", "--target", "host-tuple"
   end
 
   def install

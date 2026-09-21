@@ -10,6 +10,19 @@ repository = "https://github.com/keys-i/dependasolver"
 keywords = ["coding-agent", "dependabot", "dependency-review", "cli", "developer-tools"]
 categories = ["command-line-utilities", "development-tools"]
 publish = ["crates-io"]
+include = [
+    "/.github/workflows/solve.yml",
+    "/docs/*.md",
+    "/src/*.rs",
+    "/src/bin/*.rs",
+    "/src/dependasolver/assets/*.svg",
+    "/src/dependasolver/templates/*.html",
+    "/src/dependasolver/templates/*.yml",
+    "/tests/*.rs",
+    "/Cargo.lock",
+    "/LICENSE",
+    "/README.md",
+]
 
 [dependencies]
 anyhow = "1.0"
