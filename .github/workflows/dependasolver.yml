@@ -7,7 +7,7 @@ on:
   # GitHub Actions completion and third-party check runs re-run the evidence gate
   # Legacy commit statuses stay gated and can be re-run from workflow dispatch
   workflow_run:
-    workflows: ["Checks","Rady dependasolve","Release","Security"]
+    workflows: ["Checks","Rady dependasolve","Rady response","Release","Security"]
     types: [completed]
     branches: ['dependabot/**']
 
@@ -28,9 +28,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: keys-i/rady/.github/workflows/solve.yml@74cfda49323013abebd7b3d48abbcc629b922e69
+    uses: keys-i/rady/.github/workflows/solve.yml@1199f48b5f3fc0b694ca515959ce14669dae91f3
     with:
-      solver-ref: keys-i/rady@74cfda49323013abebd7b3d48abbcc629b922e69
+      solver-ref: keys-i/rady@1199f48b5f3fc0b694ca515959ce14669dae91f3
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
