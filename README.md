@@ -5,7 +5,7 @@ Rady is one human-first agentic tool with two capabilities:
 - `rady code` turns a request into a bounded, checked local change
 - `rady dependasolve` reviews dependency pull requests from their real diff and CI evidence
 
-The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's common brushtail possum identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter; it does not call a model API directly.
+The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's common brushtail possum identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter; it does not call a model API directly.
 
 ## Build
 
@@ -82,6 +82,18 @@ Every coding run writes:
 - `run.json` for agents and automation
 - `run.html` for people, with responsive type, safe Markdown, LaTeX rendered to MathML, accessible theme controls, a zoologically accurate common brushtail silhouette, restrained terminal detail, and reduced-motion support
 
+Runs stay available after completion or interruption. Use their identifier to inspect evidence, stop active work, restart from a retained patch, or apply a verified result only to a clean directory:
+
+```sh
+rady runs
+rady inspect RUN_ID
+rady cancel RUN_ID
+rady resume RUN_ID
+rady apply RUN_ID --directory /path/to/project
+```
+
+`apply` never stages, commits, or publishes changes. It verifies the retained patch and target revision before modifying the directory.
+
 Markdown headings, **bold**, *italics*, `<u>underline</u>`, `<mark>highlight</mark>`, tables, task lists, footnotes, code, and inline or display mathematics render locally. Other raw HTML is escaped, links are protocol-checked, and remote images become readable text. The report is self-contained: no JavaScript, web font, CDN, or network request. The CC0 common brushtail silhouette is by Rachel T Mason via PhyloPic; the interface keeps motion on state and control feedback instead of animating the animal as a cartoon.
 
 ## Harnesses
@@ -114,6 +126,8 @@ rady dependasolve \
 
 Review the preview, then add `--apply`. Repeat with `--app rady` to configure the separate Rady review identity. Setup requires GitHub CLI authentication and repository administration access. The reusable workflow accepts only an immutable source SHA and runs account-authenticated agent tooling only on a trusted private self-hosted runner.
 
-Dependasolve approves only low-risk, complete reviews with every configured and protected check passing. Dependabot auto-merge additionally requires verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Missing evidence holds the change; model confidence never replaces a gate.
+Dependasolve approves only low-risk, complete reviews with every configured and protected check passing. It suspends stale Dependabot auto-merge before starting a new review. Auto-merge is restored only after verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Missing evidence holds the change; model confidence never replaces a gate.
+
+Setup discovers local GitHub Actions workflows; their completion and third-party check runs trigger a fresh review of the exact Dependabot pull-request head. Legacy commit-status checks remain gated but need a manual workflow dispatch after they settle. A held update says whether to wait for CI or gives a bounded maintainer repair brief; Rady never writes to a Dependabot branch.
 
 [Upgrading](docs/UPGRADING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)
