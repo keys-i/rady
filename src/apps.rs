@@ -61,9 +61,12 @@ pub fn permissions() -> Value {
 
 pub fn manifest(repo: &str, callback: &str, identity: Identity) -> Value {
     json!({
-        "name": identity.display(),
+        "name": match identity {
+            Identity::Dependasolver => identity.display(),
+            Identity::Rady => "Rady by keys-i",
+        },
         "url": format!("https://github.com/{repo}"),
-        "description": "PR reviews grounded in the diff and CI, with dependency solving and coding under Rady",
+        "description": "Rady reviews pull requests from verified diffs and CI evidence, resolves safe dependency updates, and prepares trusted releases.",
         "public": true,
         "hook_attributes": {"active": false, "url": format!("https://github.com/{repo}")},
         "redirect_url": callback,
@@ -479,6 +482,16 @@ mod tests {
         app["permissions"]["pull_requests"] = json!("read");
         assert!(require_permissions(&app).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn manifest_uses_the_available_rady_name_and_product_description() {
+        let manifest = manifest("keys-i/rady", "http://127.0.0.1/callback", Identity::Rady);
+        assert_eq!(manifest["name"], "Rady by keys-i");
+        assert_eq!(
+            manifest["description"],
+            "Rady reviews pull requests from verified diffs and CI evidence, resolves safe dependency updates, and prepares trusted releases."
+        );
     }
 
     #[test]
