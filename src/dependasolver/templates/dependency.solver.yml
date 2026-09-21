@@ -107,7 +107,7 @@ jobs:
           }
 
           comment() {
-            [[ "$COMMENT_BODY" =~ ^@rady($|[[:space:]]) ]] || return 0
+            [[ "$COMMENT_BODY" =~ ^@radyybot($|[[:space:]]) ]] || return 0
             (( ${#COMMENT_BODY} <= 4000 )) || return 0
             case "$COMMENT_ASSOCIATION" in
               OWNER|MEMBER|COLLABORATOR) ;;

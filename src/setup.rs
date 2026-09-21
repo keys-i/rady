@@ -776,6 +776,8 @@ mod tests {
         assert!(workflow.contains("check_run:"));
         assert!(workflow.contains("workflow_run:"));
         assert!(workflow.contains("issue_comment:"));
+        assert!(workflow.contains(r#"^@radyybot($|[[:space:]])"#));
+        assert!(!workflow.contains(r#"^@rady($|[[:space:]])"#));
         assert!(workflow.contains("schedule:"));
         assert!(workflow.contains("max-parallel: 1"));
         assert!(workflow.contains("PRIVATE_REPOSITORY: ${{ github.event.repository.private }}"));

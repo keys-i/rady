@@ -68,7 +68,7 @@ pub fn manifest(repo: &str, callback: &str, identity: Identity) -> Value {
             Identity::Rady => "Rady by keys-i",
         },
         "url": format!("https://github.com/{repo}"),
-        "description": "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @rady requests.",
+        "description": "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @radyybot requests.",
         "public": true,
         "hook_attributes": {"active": false, "url": format!("https://github.com/{repo}")},
         "redirect_url": callback,
@@ -183,7 +183,7 @@ pub fn register_app(repo: &str, identity: Identity) -> Result<Value> {
     let form = setup_page(
         "Connect your repository",
         &format!(
-            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review pull requests from their diff and CI results, safely replace conflicted low-risk Dependabot updates, and respond when a trusted collaborator writes <code>@rady</code>.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read and write</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Issues</dt><dd>Read and write</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
+            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review pull requests from their diff and CI results, safely replace conflicted low-risk Dependabot updates, and respond when a trusted collaborator writes <code>@radyybot</code>.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read and write</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Issues</dt><dd>Read and write</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
             escape_html(repo),
             escape_html(&action),
             escape_html(&serde_json::to_string(&config)?)
@@ -574,7 +574,7 @@ mod tests {
         assert_eq!(manifest["name"], "Rady by keys-i");
         assert_eq!(
             manifest["description"],
-            "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @rady requests."
+            "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @radyybot requests."
         );
     }
 
