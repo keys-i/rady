@@ -7,7 +7,7 @@ One command provides two capabilities:
 - `rady code` turns a request into a bounded, checked local change
 - `rady dependasolve` reviews dependency pull requests from their real diff and CI evidence
 
-The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's expressive duck identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter. It provides neither a model nor a hosted service, and it does not call a model API directly.
+The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's expressive duck identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter for code and Dependasolve. Guarded `@radyybot` replies use a local model route with Gemini and Cerebras fallbacks from a GitHub-hosted runner.
 
 ## Install
 
@@ -89,7 +89,9 @@ rady code "Reduce parser allocations" \
   --max-regression 3
 ```
 
-One worker is the efficient default. `--agents 2` through `8` asks the native harness to use subagents. `--max-tokens` is a between-call budget based on provider-reported usage and requires one agent; unknown usage fails closed.
+Broad requests become at most eight small, dependency-ordered tasks. With `RADY_MODEL_CHOICES` ordered from cheapest to strongest, the planner assigns the least capable sufficient model to each task. Rady keeps writers serial, checks scope after every task, runs fixed checks and an independent review, and retries only from new failure evidence. This is the default worker network; it avoids parallel edits to one worktree.
+
+One native harness agent per task is the efficient default. `--agents 2` through `8` lets that harness fan out bounded research while Rady keeps its planned implementation tasks serial. `--max-tokens` is a between-call budget based on provider-reported usage and requires one native agent because nested usage cannot be verified; unknown usage fails closed.
 
 ## Human output
 
@@ -131,6 +133,8 @@ For a custom adapter, set `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND`. Input 
 
 Custom adapters are privileged local programs, not a sandbox. Rady strips common model and GitHub token variables from worker environments, bounds time and output, and terminates the child process group on overflow or timeout.
 
+Set `RADY_MODEL_CHOICES` to a comma-separated native-harness model list from least to most capable. `rady code` chooses a tier for each planner or worker task, escalates only after failing evidence, and stops after the configured attempt limit or a no-progress repair. Pull-request and Dependasolve reviews choose a tier from their bounded evidence. Set `RADY_MODEL` to pin one model and override that selection.
+
 ## Dependabot pull-request review
 
 Preview repository setup before applying it:
@@ -154,5 +158,16 @@ Setup discovers local GitHub Actions workflows; their completion and third-party
 For a genuinely conflicted same-repository Dependabot patch or minor update, Rady can ask the native agent harness to recreate that bounded dependency change from the current base. This path requires an approved low-risk diff and selected CI evidence, 95–100% compatibility, no maintainer changes, and only approved manifest, lockfile or workflow paths. The original head and base are pinned and rechecked, and publication stops if the base advances during the run. Rady runs the inferred project test and fixed acceptance check without exposing the App token to either process, then opens a separate replacement PR and links it from the original. It never pushes to or closes the Dependabot PR, and the replacement remains a normal human review and merge decision.
 
 On an issue or pull request, repository owners, members, and collaborators can write `@radyybot <prompt>` for a guarded, read-only evidence response. `@radyybot` by itself gives concise usage. Comment requests never edit code, create a change, or publish anything. Mentions from everyone else are treated as untrusted input and cannot start an agent run.
+
+### Hosted `@radyybot` replies
+
+Mention replies use a local, no-extra-call route. On public repositories, simple questions start with free Gemini 3.5 Flash-Lite and fall back to Cerebras `gpt-oss-120b`; balanced questions start with Cerebras `zai-glm-4.7` and fall back to GPT-OSS; deep questions start with Gemini 3.8 Flash, then GLM, then GPT-OSS. Private and unknown repositories skip both Gemini models by default because Gemini free-tier content may improve Google products. Gemini quota or capacity responses follow the next fallback. Set these at repository or organisation scope:
+
+| GitHub setting | Name |
+| --- | --- |
+| Actions secret | `RADY_GEMINI_API_KEY`, `RADY_CEREBRAS_API_KEY` |
+| Actions variable | `RADY_GEMINI_PRIVATE_OK=true` to explicitly allow Gemini for private repositories |
+
+Gemini Free quotas vary by Google project; view the current allowance in AI Studio. Cerebras's free limits are organisation-specific and can change or be reduced temporarily; its Free tier has no automatic billing. Cerebras says API inputs and outputs are not retained or used for training, but the mention prompt and its bounded issue or pull-request evidence still cross the Gemini or Cerebras boundary for inference. The router is local rather than a separate third-party routing API, so it adds neither another credential nor another data recipient. This does not replace the trusted native harness required for `rady code`, Dependasolve reviews, or conflict repair.
 
 [Upgrading](docs/UPGRADING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)
