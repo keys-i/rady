@@ -3,9 +3,13 @@ name = "rady"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Evidence-gated coding and dependency review agent"
+description = "Checked coding changes and Dependabot PR reviews from local agent CLIs"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/keys-i/dependasolver"
+keywords = ["coding-agent", "dependabot", "dependency-review", "cli", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
+publish = ["crates-io"]
 
 [dependencies]
 anyhow = "1.0"

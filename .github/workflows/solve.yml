@@ -1,63 +1,223 @@
-name: Dependasolver
+name: Rady dependasolve
 
 on:
   workflow_call:
     inputs:
+      solver-ref:
+        description: Trusted solver source, keys-i/dependasolver@40-lowercase-hex SHA
+        required: true
+        type: string
       app-client-id:
         required: true
         type: string
+      rady-app-client-id:
+        type: string
+        default: ''
       required-checks:
         description: JSON array of required CI check names
         required: true
         type: string
+      model:
+        type: string
+        default: ''
+      harness:
+        description: Installed, authenticated native agent CLI
+        type: string
+        default: codex
+      pr-number:
+        type: number
+        default: 0
     secrets:
       app-private-key:
         required: true
+      rady-app-private-key:
+        required: false
 
 permissions: {}
 
 concurrency:
-  group: dependasolver-${{ github.event.pull_request.number }}
+  group: rady-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
   cancel-in-progress: true
 
 jobs:
-  auto-merge:
+  review:
     if: >-
-      github.event_name == 'pull_request_target' &&
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      !github.event.pull_request.draft
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
+      github.event.repository.private &&
+      ((github.event_name == 'pull_request_target' && !github.event.pull_request.draft) ||
+      (github.event_name == 'workflow_dispatch' && inputs.pr-number > 0) ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.status == 'completed' &&
+      github.event.workflow_run.pull_requests[0].number > 0 &&
+      !startsWith(github.event.workflow_run.name, 'Rady dependasolve')) ||
+      (github.event_name == 'check_run' &&
+      github.event.check_run.status == 'completed' &&
+      github.event.check_run.pull_requests[0].number > 0 &&
+      !startsWith(github.event.check_run.name, 'Rady dependasolve gate') &&
+      !startsWith(github.event.check_run.name, 'Rady dependasolve /')))
+    runs-on: self-hosted
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
     steps:
-      # This privileged workflow never checks out or executes PR code.
-      - name: Clear previous auto-merge approval
-        if: github.event.pull_request.auto_merge != null
+      - name: Require a private repository
+        shell: bash
+        env:
+          PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
+        run: |
+          set -euo pipefail
+          [[ "$PRIVATE_REPOSITORY" == true ]] || {
+            echo 'Rady account authentication runs only on trusted private self-hosted runners' >&2
+            exit 1
+          }
+      - name: Suspend stale Dependabot auto-merge
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-        run: gh pr merge "$PR_URL" --disable-auto
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'PR number must be positive' >&2
+            exit 1
+          }
+          pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
+          author=$(jq -er '.user.login | select(type == "string")' <<<"$pull")
+          if [[ "$author" != 'dependabot[bot]' ]]; then
+            exit 0
+          fi
+          if ! jq -e --arg repo "$GH_REPO" '
+            .state == "open" and
+            .base.repo.full_name == $repo and
+            .head.repo.full_name == $repo and
+            ((.html_url | type) == "string") and
+            (.html_url | startswith("https://github.com/" + $repo + "/pull/"))
+          ' <<<"$pull" > /dev/null; then
+            echo 'Dependabot PR state is not trusted; refusing to leave stale auto-merge enabled' >&2
+            exit 1
+          fi
+          if jq -e '.auto_merge != null' <<<"$pull" > /dev/null; then
+            url=$(jq -er '.html_url' <<<"$pull")
+            gh pr merge "$url" --disable-auto
+          fi
+      - name: Validate trusted solver source
+        id: source
+        shell: bash
+        env:
+          SOLVER_REF: ${{ inputs.solver-ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOLVER_REF" =~ ^keys-i/dependasolver@([a-f0-9]{40})$ ]]; then
+            echo 'solver-ref must be keys-i/dependasolver@40_LOWERCASE_COMMIT_SHA' >&2
+            exit 1
+          fi
+          echo 'repository=keys-i/dependasolver' >> "$GITHUB_OUTPUT"
+          echo "sha=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      # Check out only the immutable solver source, never the PR or its scripts
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ steps.source.outputs.repository }}
+          ref: ${{ steps.source.outputs.sha }}
+          persist-credentials: false
+      - name: Build the trusted solver
+        run: cargo build --release --locked
+      - name: Verify the authenticated agent harness
+        env:
+          RADY_HARNESS: ${{ inputs.harness }}
+        run: target/release/rady doctor --harness "$RADY_HARNESS"
+      - name: Resolve PR author and commit
+        id: pr
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
+        run: target/release/rady resolve --repo "$GH_REPO" --pr "$PR_NUMBER"
+      - name: Require the selected App credentials
+        shell: bash
+        env:
+          DEPENDENCY: ${{ steps.pr.outputs.dependency }}
+          DEPENDASOLVER_ID: ${{ inputs.app-client-id }}
+          RADY_ID: ${{ inputs.rady-app-client-id }}
+        run: |
+          set -euo pipefail
+          if [[ "$DEPENDENCY" != true && ( -z "$RADY_ID" || "$RADY_ID" == "$DEPENDASOLVER_ID" ) ]]; then
+            echo 'Configure a separate Rady App to post normal PR reviews as Rady' >&2
+            exit 1
+          fi
       - name: Create repository-scoped GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ inputs.app-client-id }}
-          private-key: ${{ secrets.app-private-key }}
+          client-id: ${{ steps.pr.outputs.dependency == 'true' && inputs.app-client-id || inputs.rady-app-client-id }}
+          private-key: ${{ steps.pr.outputs.dependency == 'true' && secrets.app-private-key || secrets.rady-app-private-key }}
           repositories: ${{ github.event.repository.name }}
           permission-administration: read
-          permission-pull-requests: read
+          permission-contents: read
+          permission-checks: read
+          permission-statuses: read
+          permission-pull-requests: write
+      # == Canonical pull request evidence ==
+      # Load fresh API state without checking out or running PR-controlled code
+      - name: Fetch current pull request state
+        id: pr-state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
+          EXPECTED_HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'PR number must be positive' >&2
+            exit 1
+          }
+          pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
+          jq -e --arg head "$EXPECTED_HEAD" '
+            .state == "open" and .draft == false and
+            .head.sha == $head and
+            (.html_url | type == "string" and startswith("https://")) and
+            (.base.ref | type == "string" and length > 0)
+          ' <<<"$pull" > /dev/null
+          event="$RUNNER_TEMP/rady-pull-request-event.json"
+          jq -n --argjson pull "$pull" '{pull_request: $pull}' > "$event"
+          {
+            echo "event=$event"
+            echo "url=$(jq -r .html_url <<<"$pull")"
+            echo "head=$(jq -r .head.sha <<<"$pull")"
+            echo "base=$(jq -r .base.ref <<<"$pull")"
+          } >> "$GITHUB_OUTPUT"
       - name: Fetch verified Dependabot metadata
+        if: steps.pr.outputs.dependency == 'true'
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+        env:
+          # Supply the freshly verified PR payload for manual and check-run events
+          GITHUB_EVENT_PATH: ${{ steps.pr-state.outputs.event }}
         with:
           compat-lookup: true
           github-token: ${{ steps.app-token.outputs.token }}
+      - name: Review the diff and current CI evidence
+        id: review
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+          RADY_MODEL: ${{ inputs.model }}
+          RADY_HARNESS: ${{ inputs.harness }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
+          REQUIRED_CHECKS: ${{ inputs.required-checks }}
+          EXPECTED_HEAD: ${{ steps.pr-state.outputs.head }}
+          SCORE: ${{ steps.metadata.outputs.compatibility-score }}
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+          MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
+        run: target/release/rady review --repo "$GH_REPO" --pr "$PR_NUMBER"
       - name: Require protected checks and enable auto-merge
         if: >-
+          steps.review.outputs.enable_auto_merge == 'true' &&
           fromJSON(steps.metadata.outputs.compatibility-score || '0') >= 95 &&
           fromJSON(steps.metadata.outputs.compatibility-score || '0') <= 100 &&
           contains(fromJSON('["version-update:semver-patch","version-update:semver-minor"]'), steps.metadata.outputs.update-type) &&
@@ -67,10 +227,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_URL: ${{ steps.pr-state.outputs.url }}
+          HEAD_SHA: ${{ steps.pr-state.outputs.head }}
           REQUIRED_CHECKS: ${{ inputs.required-checks }}
-          BASE_BRANCH: ${{ github.event.pull_request.base.ref }}
+          BASE_BRANCH: ${{ steps.pr-state.outputs.base }}
         run: |
           set -euo pipefail
           branch=$(jq -rn --arg branch "$BASE_BRANCH" '$branch | @uri')

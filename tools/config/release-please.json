@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "include-component-in-tag": false,
+  "packages": {
+    ".": {
+      "package-name": "rady",
+      "initial-version": "0.1.0",
+      "changelog-path": "docs/CHANGELOG.md"
+    }
+  }
+}

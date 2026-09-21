@@ -1,11 +1,31 @@
 # Rady
 
-Rady is one human-first agentic tool with two capabilities:
+Rady checks agent-made code changes before you apply or publish them. It also reviews Dependabot pull requests using the actual diff and current CI evidence.
+
+One command provides two capabilities:
 
 - `rady code` turns a request into a bounded, checked local change
 - `rady dependasolve` reviews dependency pull requests from their real diff and CI evidence
 
-The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's common brushtail possum identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter; it does not call a model API directly.
+The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's common brushtail possum identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter. It provides neither a model nor a hosted service, and it does not call a model API directly.
+
+## Install
+
+Rady supports macOS and Linux. Homebrew installs the pinned source from this repository and provides both `rady` and the `dependasolver` compatibility command:
+
+```sh
+brew tap keys-i/rady https://github.com/keys-i/dependasolver
+brew install keys-i/rady/rady
+```
+
+Cargo can install the same immutable revision directly:
+
+```sh
+cargo install --git https://github.com/keys-i/dependasolver \
+  --rev 482726baf2c19a02737fa29ec6b94ad068608f3b --locked rady
+```
+
+Rady requires an authenticated [Codex CLI](https://developers.openai.com/codex/cli/) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code), unless you configure a custom local adapter. Repository setup and pull-request review also require the GitHub CLI.
 
 ## Build
 
@@ -18,7 +38,7 @@ target/release/rady --help
 
 The compatibility executable `target/release/dependasolver` opens `rady dependasolve`.
 
-## Code
+## Checked coding changes
 
 Give Rady a request and at least one check:
 
@@ -113,7 +133,7 @@ For a custom adapter, set `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND`. Input 
 
 Custom adapters are privileged local programs, not a sandbox. Rady strips common model and GitHub token variables from worker environments, bounds time and output, and terminates the child process group on overflow or timeout.
 
-## Dependasolve
+## Dependabot pull-request review
 
 Preview repository setup before applying it:
 
