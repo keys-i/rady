@@ -538,12 +538,7 @@ fn unique_indices(values: &[usize], upper: usize, name: &str) -> Result<()> {
 }
 
 fn plan_schema(model_choices: usize) -> Value {
-    let mut model = json!({});
-    if model_choices > 0 {
-        model =
-            json!({"model_index": {"type": "integer", "minimum": 0, "maximum": model_choices - 1}});
-    }
-    json!({
+    let mut schema = json!({
         "type": "object",
         "additionalProperties": false,
         "properties": {
@@ -557,15 +552,31 @@ fn plan_schema(model_choices: usize) -> Value {
                     "description": {"type": "string"},
                     "scope": {"type": "array", "minItems": 1, "items": {"type": "string"}},
                     "acceptance": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
-                    "depends_on": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-                    "model_index": model.get("model_index").cloned().unwrap_or(Value::Null)
+                    "depends_on": {"type": "array", "items": {"type": "integer", "minimum": 0}}
                 },
-                "required": if model_choices > 0 { json!(["description", "scope", "acceptance", "depends_on", "model_index"]) } else { json!(["description", "scope", "acceptance", "depends_on"]) }
-            }},
-            "model_index": model.get("model_index").cloned().unwrap_or(Value::Null)
+                "required": ["description", "scope", "acceptance", "depends_on"]
+            }}
         },
-        "required": if model_choices > 0 { json!(["acceptance", "scope", "limitations", "performance_required", "tasks", "model_index"]) } else { json!(["acceptance", "scope", "limitations", "performance_required", "tasks"]) }
-    })
+        "required": ["acceptance", "scope", "limitations", "performance_required", "tasks"]
+    });
+    if model_choices > 0 {
+        let model_index = json!({
+            "type": "integer",
+            "minimum": 0,
+            "maximum": model_choices - 1
+        });
+        schema["properties"]["model_index"] = model_index.clone();
+        schema["properties"]["tasks"]["items"]["properties"]["model_index"] = model_index;
+        schema["required"]
+            .as_array_mut()
+            .expect("plan schema required fields must be an array")
+            .push(json!("model_index"));
+        schema["properties"]["tasks"]["items"]["required"]
+            .as_array_mut()
+            .expect("task schema required fields must be an array")
+            .push(json!("model_index"));
+    }
+    schema
 }
 
 fn review_schema() -> Value {
@@ -671,12 +682,24 @@ mod tests {
 
     #[test]
     fn plan_schema_requires_model_indices_only_when_choices_exist() {
-        assert!(plan_schema(2).to_string().contains("model_index"));
-        assert!(
-            plan_schema(0)["required"]
-                .as_array()
-                .is_some_and(|items| !items.contains(&json!("model_index")))
-        );
+        for (choices, expected) in [(0, false), (2, true)] {
+            let schema = plan_schema(choices);
+            let task = &schema["properties"]["tasks"]["items"];
+            for object in [&schema, task] {
+                assert_eq!(
+                    object["properties"].get("model_index").is_some(),
+                    expected,
+                    "model choices: {choices}"
+                );
+                assert_eq!(
+                    object["required"]
+                        .as_array()
+                        .is_some_and(|items| items.contains(&json!("model_index"))),
+                    expected,
+                    "model choices: {choices}"
+                );
+            }
+        }
     }
 
     #[test]
