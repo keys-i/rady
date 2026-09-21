@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
+use tempfile::NamedTempFile;
 
 use crate::Result;
 use crate::apps::{self, Identity};
@@ -126,6 +127,7 @@ pub fn local_files(
     directory: &Path,
     source: &SourceRef,
     required: &[String],
+    overwrite: bool,
 ) -> Result<BTreeMap<PathBuf, String>> {
     let root = directory
         .canonicalize()
@@ -146,7 +148,7 @@ pub fn local_files(
             &serde_json::to_string(required)?.replace('\'', "''"),
         );
     let workflow = safe_path(&root, ".github/workflows/dependasolver.yml")?;
-    let mut files = BTreeMap::from([(workflow, caller)]);
+    let mut files = BTreeMap::from([(workflow.clone(), caller)]);
     let dependabot = [
         safe_path(&root, ".github/dependabot.yml")?,
         safe_path(&root, ".github/dependabot.yaml")?,
@@ -155,8 +157,16 @@ pub fn local_files(
         files.insert(dependabot[0].clone(), dependabot_config(&root)?);
     }
     for (path, content) in &files {
-        if path.exists() && (!path.is_file() || fs::read_to_string(path)? != *content) {
-            bail!("refusing to overwrite existing content: {}", path.display());
+        match fs::symlink_metadata(path) {
+            Ok(metadata) => {
+                if !metadata.file_type().is_file()
+                    || (fs::read_to_string(path)? != *content && (!overwrite || path != &workflow))
+                {
+                    bail!("refusing to overwrite existing content: {}", path.display());
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
         }
     }
     Ok(files)
@@ -355,6 +365,43 @@ pub fn protect(endpoint: &str, protection: Option<&Value>, required: &[String]) 
     Ok(())
 }
 
+fn write_setup_file(path: &Path, content: &[u8], overwrite: bool) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("setup path has no parent directory"))?;
+    fs::create_dir_all(parent)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if !metadata.file_type().is_file() {
+                bail!("refusing to overwrite existing content: {}", path.display());
+            }
+            if fs::read(path)? == content {
+                return Ok(());
+            }
+            if !overwrite {
+                bail!("refusing to overwrite existing content: {}", path.display());
+            }
+            let mut temporary = NamedTempFile::new_in(parent)?;
+            temporary
+                .as_file()
+                .set_permissions(metadata.permissions())?;
+            temporary.write_all(content)?;
+            temporary.as_file().sync_all()?;
+            temporary
+                .persist(path)
+                .map_err(|error| error.error)
+                .with_context(|| format!("could not replace setup file {}", path.display()))?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+            file.write_all(content)?;
+            file.sync_all()?;
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn install(
     repo: &str,
@@ -363,12 +410,13 @@ pub fn install(
     directory: &Path,
     new_app: bool,
     identity: Identity,
+    overwrite: bool,
 ) -> Result<()> {
     let prefix = identity.prefix();
     let client_name = format!("{prefix}_APP_CLIENT_ID");
     let key_name = format!("{prefix}_APP_PRIVATE_KEY");
     let slug_name = format!("{prefix}_APP_SLUG");
-    let files = local_files(directory, source, required)?;
+    let files = local_files(directory, source, required, overwrite)?;
     let info = github::api(&format!("repos/{repo}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("repository response was empty"))?;
     if info["full_name"]
@@ -401,17 +449,8 @@ pub fn install(
         bail!("publish the source workflow at the immutable commit first");
     }
     for (path, content) in files {
-        if path.exists() {
-            continue;
-        }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        file.write_all(content.as_bytes())?;
+        let replace = overwrite && path.ends_with(".github/workflows/dependasolver.yml");
+        write_setup_file(&path, content.as_bytes(), replace)?;
     }
     let branch = percent_encode(info["default_branch"].as_str().unwrap_or_default());
     let endpoint = format!("repos/{repo}/branches/{branch}/protection");
@@ -480,11 +519,12 @@ pub fn run(
     directory: &Path,
     identity: Identity,
     new_app: bool,
+    overwrite: bool,
     apply: bool,
 ) -> Result<Value> {
     github::validate_repository(repo)?;
     let required = checks(required)?;
-    let files = local_files(directory, source, &required)?;
+    let files = local_files(directory, source, &required, overwrite)?;
     let preview = json!({
         "repository": repo,
         "source": source.joined(),
@@ -495,10 +535,13 @@ pub fn run(
         "new_app": new_app,
         "app_permissions": apps::permissions(),
         "identity": identity.slug(),
+        "overwrite": overwrite,
         "apply": apply,
     });
     if apply {
-        install(repo, source, &required, directory, new_app, identity)?;
+        install(
+            repo, source, &required, directory, new_app, identity, overwrite,
+        )?;
     }
     Ok(preview)
 }
@@ -602,6 +645,28 @@ mod tests {
     }
 
     #[test]
+    fn generated_workflow_overwrites_by_default_and_can_be_protected() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let workflow = temporary.path().join(".github/workflows/dependasolver.yml");
+        fs::create_dir_all(workflow.parent().expect("workflow parent"))?;
+        fs::write(&workflow, "existing workflow\n")?;
+        let source = SourceRef::parse(&format!("keys-i/rady@{}", "b".repeat(40)))?;
+
+        assert!(local_files(temporary.path(), &source, &["test".into()], false).is_err());
+        let files = local_files(temporary.path(), &source, &["test".into()], true)?;
+        let (workflow, generated) = files
+            .iter()
+            .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
+            .expect("generated workflow");
+        write_setup_file(workflow, generated.as_bytes(), true)?;
+        assert_eq!(fs::read_to_string(workflow)?, *generated);
+
+        assert!(write_setup_file(workflow, b"blocked update\n", false).is_err());
+        assert_eq!(fs::read_to_string(workflow)?, *generated);
+        Ok(())
+    }
+
+    #[test]
     fn merged_checks_deduplicate_contexts_and_preserve_bindings() {
         let protection = json!({"required_status_checks": {"contexts": ["test"], "checks": [{"context": "lint", "app_id": 4}]}});
         let merged = merged_checks(Some(&protection), &["test".to_owned(), "audit".to_owned()]);
@@ -684,7 +749,7 @@ mod tests {
             "name: CI\non: [pull_request]\n",
         )?;
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
-        let files = local_files(temporary.path(), &source, &["check".to_owned()])?;
+        let files = local_files(temporary.path(), &source, &["check".to_owned()], true)?;
         let workflow = files
             .iter()
             .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))

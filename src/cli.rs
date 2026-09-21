@@ -175,6 +175,10 @@ struct DependSolveArgs {
     #[arg(long)]
     new_app: bool,
 
+    /// Refuse to replace an existing generated workflow
+    #[arg(long)]
+    no_overwrite: bool,
+
     #[arg(long)]
     apply: bool,
 }
@@ -453,6 +457,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
         &arguments.directory,
         arguments.identity,
         arguments.new_app,
+        !arguments.no_overwrite,
         arguments.apply,
     )?;
     ui.stage(if arguments.apply {
@@ -682,6 +687,22 @@ mod tests {
             panic!("dependasolve command expected");
         };
         assert!(arguments.solver_ref.is_none());
+        assert!(!arguments.no_overwrite);
+
+        let cli = Cli::try_parse_from([
+            "rady",
+            "dependasolve",
+            "--repo",
+            "owner/repo",
+            "--checks",
+            "test",
+            "--no-overwrite",
+        ])
+        .expect("no-overwrite must be accepted");
+        let Commands::Dependasolve(arguments) = cli.command else {
+            panic!("dependasolve command expected");
+        };
+        assert!(arguments.no_overwrite);
     }
 
     #[test]
