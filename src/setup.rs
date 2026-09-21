@@ -228,6 +228,9 @@ fn workflow_run_trigger(root: &Path) -> Result<String> {
             .unwrap_or_else(|| {
                 format!(".github/workflows/{}", entry.file_name().to_string_lossy())
             });
+        if matches!(name.as_str(), "Rady dependasolve" | "Rady response") {
+            continue;
+        }
         names.insert(name);
     }
     if names.is_empty() {
@@ -760,6 +763,15 @@ mod tests {
             temporary.path().join(".github/workflows/ci.yml"),
             "name: CI\non: [pull_request]\n",
         )?;
+        for (file, name) in [
+            ("solve.yml", "Rady dependasolve"),
+            ("respond.yml", "Rady response"),
+        ] {
+            fs::write(
+                temporary.path().join(".github/workflows").join(file),
+                format!("name: {name}\non: [workflow_call]\n"),
+            )?;
+        }
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
         let files = local_files(
             temporary.path(),
