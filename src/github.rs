@@ -104,12 +104,77 @@ fn gh_with_token(
         cancel_file,
     )?;
     if output.code != 0 {
-        if missing && output.stderr.contains("(HTTP 404)") {
+        if is_missing_response(&output.stderr, missing) {
             return Ok(None);
         }
-        bail!("GitHub request failed; check CLI login and repository access");
+        bail!("{}", github_failure(&output.stderr, output.code));
     }
     Ok(Some(output.stdout))
+}
+
+fn is_missing_response(stderr: &str, missing: bool) -> bool {
+    missing && github_status(stderr) == Some(404)
+}
+
+fn github_status(stderr: &str) -> Option<u16> {
+    Regex::new(r"(?i)(?:http(?:/[0-9.]+)?|status(?: code)?)\D{0,12}([1-5][0-9]{2})")
+        .ok()?
+        .captures(stderr)?
+        .get(1)?
+        .as_str()
+        .parse()
+        .ok()
+}
+
+fn github_failure(stderr: &str, code: i32) -> String {
+    match github_status(stderr) {
+        Some(401) => "GitHub authentication failed (401); sign in with gh auth login or refresh the App token".to_owned(),
+        Some(403) => {
+            "GitHub access denied (403); confirm the App installation or CLI account can access the repository".to_owned()
+        }
+        Some(404) => {
+            "GitHub repository or API resource was not found (404); confirm the repository name and App installation".to_owned()
+        }
+        Some(422) => {
+            "GitHub rejected the request (422); check the repository configuration and requested change".to_owned()
+        }
+        Some(429) => "GitHub rate limit reached (429); wait before retrying".to_owned(),
+        _ if stderr.to_ascii_lowercase().contains("gh auth login")
+            || stderr
+                .to_ascii_lowercase()
+                .contains("not logged into any github hosts") =>
+        {
+            "GitHub CLI is not authenticated; run gh auth login".to_owned()
+        }
+        _ => format!("GitHub request failed (exit {code}); check gh auth status and repository access"),
+    }
+}
+
+fn safe_endpoint_label(endpoint: &str) -> String {
+    const LIMIT: usize = 160;
+    let mut redact_next = false;
+    let mut label = String::new();
+    for (index, segment) in endpoint.split('/').enumerate() {
+        if index != 0 {
+            label.push('/');
+        }
+        if redact_next {
+            label.push_str("<redacted>");
+            redact_next = false;
+            continue;
+        }
+        let segment: String = segment
+            .chars()
+            .filter(|character| !character.is_control())
+            .collect();
+        redact_next = segment == "app-manifests";
+        label.push_str(&segment);
+    }
+    if label.chars().count() <= LIMIT {
+        return label;
+    }
+    let shortened: String = label.chars().take(LIMIT - 1).collect();
+    format!("{shortened}…")
 }
 
 fn github_environment(
@@ -168,8 +233,8 @@ fn api_with_token(
         missing,
         token,
         cancel_file,
-    );
-    let output = output?;
+    )
+    .with_context(|| format!("GitHub API {method} {}", safe_endpoint_label(endpoint)))?;
     let Some(output) = output.filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
@@ -218,6 +283,81 @@ mod tests {
             ),
         ] {
             assert_eq!(github_environment(token, &ambient), expected);
+        }
+    }
+
+    #[test]
+    fn github_failures_are_classified_without_echoing_stderr() {
+        let token = "arbitrary-token-that-must-not-escape";
+        for (stderr, status, missing, message, endpoint, hidden) in [
+            (
+                "request failed (HTTP 404)",
+                Some(404),
+                true,
+                "not found (404)",
+                "repos/owner/repo",
+                None,
+            ),
+            (
+                "HTTP/2 401 unauthorized",
+                Some(401),
+                false,
+                "authentication failed (401)",
+                "repos/owner/repo",
+                None,
+            ),
+            (
+                "status code: 403",
+                Some(403),
+                false,
+                "access denied (403)",
+                "repos/owner/repo",
+                None,
+            ),
+            (
+                "HTTP 422",
+                Some(422),
+                false,
+                "rejected the request (422)",
+                "repos/owner/repo",
+                None,
+            ),
+            (
+                "HTTP 429",
+                Some(429),
+                false,
+                "rate limit reached (429)",
+                "repos/owner/repo",
+                None,
+            ),
+            (
+                "To get started with GitHub CLI, please run: gh auth login",
+                None,
+                false,
+                "CLI is not authenticated",
+                "repos/owner/repo",
+                None,
+            ),
+            (
+                "connection closed with secret arbitrary-token-that-must-not-escape",
+                None,
+                false,
+                "request failed (exit 7)",
+                "app-manifests/one-time-code\nwith-control/conversions/abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz",
+                Some("one-time-code"),
+            ),
+        ] {
+            assert_eq!(github_status(stderr), status, "{stderr}");
+            assert_eq!(is_missing_response(stderr, true), missing, "{stderr}");
+            let failure = github_failure(stderr, 7);
+            assert!(failure.contains(message), "{stderr}: {failure}");
+            assert!(!failure.contains(token), "{stderr}: {failure}");
+            let label = safe_endpoint_label(endpoint);
+            assert!(label.chars().count() <= 160, "{label}");
+            assert!(!label.chars().any(char::is_control), "{label}");
+            if let Some(hidden) = hidden {
+                assert!(!label.contains(hidden), "{label}");
+            }
         }
     }
 }
