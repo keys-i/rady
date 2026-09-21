@@ -310,10 +310,23 @@ fn handle_registration_request(
     form: &str,
     identity: Identity,
 ) -> Result<Option<String>> {
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(10)))?;
-    let mut request = vec![0_u8; 16_384];
-    let length = stream.read(&mut request)?;
-    let request = String::from_utf8_lossy(&request[..length]);
+    let mut request = Vec::with_capacity(1_024);
+    while request.len() < 16_384 && !request.windows(4).any(|ending| ending == b"\r\n\r\n") {
+        let mut chunk = [0_u8; 1_024];
+        let limit = chunk.len().min(16_384 - request.len());
+        let length = stream.read(&mut chunk[..limit])?;
+        if length == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..length]);
+    }
+    if !request.windows(4).any(|ending| ending == b"\r\n\r\n") {
+        respond(stream, 400, "Bad request", nonce)?;
+        return Ok(None);
+    }
+    let request = String::from_utf8_lossy(&request);
     let mut lines = request.lines();
     let target = lines
         .next()
@@ -448,6 +461,42 @@ fn open_browser(url: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_request_waits_for_browser_bytes() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let host = address.to_string();
+        let request_host = host.clone();
+        let browser = thread::spawn(move || -> Result<String> {
+            let mut stream = TcpStream::connect(address)?;
+            thread::sleep(Duration::from_millis(20));
+            stream.write_all(b"GET /start HTTP/1.1\r\n")?;
+            thread::sleep(Duration::from_millis(20));
+            stream.write_all(format!("Host: {request_host}\r\n\r\n").as_bytes())?;
+            let mut response = [0_u8; 1_024];
+            let length = stream.read(&mut response)?;
+            Ok(String::from_utf8(response[..length].to_vec())?)
+        });
+        let (mut stream, _) = listener.accept()?;
+        stream.set_nonblocking(true)?;
+        let result = handle_registration_request(
+            &mut stream,
+            &host,
+            "/start",
+            "/callback",
+            "state",
+            "nonce",
+            "Ready",
+            Identity::Rady,
+        )?;
+        assert!(result.is_none());
+        let response = browser
+            .join()
+            .map_err(|_| anyhow!("browser thread panicked"))??;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response:?}");
+        Ok(())
+    }
 
     #[test]
     fn callback_matrix_covers_valid_state_path_encoding_and_bad_codes() {
