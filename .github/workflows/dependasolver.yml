@@ -2,10 +2,7 @@ name: Rady dependasolve
 
 on:
   pull_request_target:
-    types: [opened, reopened, synchronize, edited, ready_for_review]
-  # == Event-driven re-review ==
-  # GitHub Actions completion and third-party check runs re-run the evidence gate
-  # Legacy commit statuses stay gated and can be re-run from workflow dispatch
+    types: [opened, reopened, synchronize, edited, ready_for_review, closed]
   workflow_run:
     workflows: ["Checks","Rady dependasolve","Rady response","Release","Security"]
     types: [completed]
@@ -13,28 +10,173 @@ on:
 
   check_run:
     types: [completed]
+  issue_comment:
+    types: [created]
+  push:
+    paths: ['.github/workflows/dependasolver.yml']
+  schedule:
+    - cron: '17 3 * * *'
   workflow_dispatch:
     inputs:
       pr-number:
-        description: PR number to review again using the current CI results
-        required: true
-        type: number
+        description: Optional pull request number; leave blank to review the open Dependabot backlog
+        required: false
+        type: string
 
 permissions: {}
 
 jobs:
+  select:
+    name: Choose pull requests
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+      has-prs: ${{ steps.targets.outputs.has-prs }}
+      mention: ${{ steps.targets.outputs.mention }}
+      issue-number: ${{ steps.targets.outputs.issue-number }}
+      comment-id: ${{ steps.targets.outputs.comment-id }}
+    steps:
+      - name: Select requested or pending pull-request reviews
+        id: targets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number || '' }}
+          WORKFLOW_STATUS: ${{ github.event.workflow_run.status || '' }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name || '' }}
+          CHECK_STATUS: ${{ github.event.check_run.status || '' }}
+          CHECK_NAME: ${{ github.event.check_run.name || '' }}
+          COMMENT_BODY: ${{ github.event.comment.body || '' }}
+          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association || '' }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || 0 }}
+          COMMENT_ID: ${{ github.event.comment.id || 0 }}
+        run: |
+          set -euo pipefail
+          matrix='[]'
+          mention=false
+          issue_number=0
+          comment_id=0
+
+          emit() {
+            jq -e 'type == "array" and length <= 100 and all(.[]; type == "number" and . > 0 and floor == .)' <<<"$matrix" > /dev/null
+            {
+              echo "matrix=$matrix"
+              if [[ "$matrix" == '[]' ]]; then
+                echo 'has-prs=false'
+              else
+                echo 'has-prs=true'
+              fi
+              echo "mention=$mention"
+              echo "issue-number=$issue_number"
+              echo "comment-id=$comment_id"
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          one() {
+            [[ "$1" =~ ^[1-9][0-9]*$ ]] || return 0
+            matrix=$(jq -cn --argjson number "$1" '[$number]')
+          }
+
+          backlog() {
+            pulls='[]'
+            for page in 1 2 3; do
+              batch=$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100&sort=created&direction=asc&page=$page")
+              pulls=$(jq -ce --argjson batch "$batch" '. + $batch' <<<"$pulls")
+              (( $(jq 'length' <<<"$batch") < 100 )) && break
+            done
+            if (( $(jq 'length' <<<"$batch") == 100 )); then
+              extra=$(gh api "repos/$GH_REPO/pulls?state=open&per_page=1&sort=created&direction=asc&page=301")
+              [[ "$extra" == '[]' ]] || { echo 'Rady backfill supports at most 300 open pull requests' >&2; exit 1; }
+            fi
+            matrix=$(jq -cer --arg repo "$GH_REPO" --argjson private "$PRIVATE_REPOSITORY" '
+              [.[] | select(
+                .draft == false and
+                ($private or (
+                  .head.repo.full_name? == $repo and
+                  .base.repo.full_name? == $repo and
+                  (.user.login == "dependabot[bot]" or
+                    .author_association == "OWNER" or
+                    .author_association == "MEMBER" or
+                    .author_association == "COLLABORATOR")
+                ))
+              ) | .number]
+            ' <<<"$pulls")
+            (( $(jq 'length' <<<"$matrix") <= 100 )) || { echo 'Rady backfill supports at most 100 eligible pull requests' >&2; exit 1; }
+          }
+
+          comment() {
+            [[ "$COMMENT_BODY" =~ ^@rady($|[[:space:]]) ]] || return 0
+            (( ${#COMMENT_BODY} <= 4000 )) || return 0
+            case "$COMMENT_ASSOCIATION" in
+              OWNER|MEMBER|COLLABORATOR) ;;
+              *) return 0 ;;
+            esac
+            [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ && "$COMMENT_ID" =~ ^[1-9][0-9]*$ ]] || return 0
+            mention=true
+            issue_number="$ISSUE_NUMBER"
+            comment_id="$COMMENT_ID"
+          }
+
+          case "$EVENT_NAME" in
+            pull_request_target) one "$PR_NUMBER" ;;
+            workflow_run)
+              [[ "$WORKFLOW_STATUS" == completed && "$WORKFLOW_NAME" != 'Rady dependasolve' ]] && one "$PR_NUMBER"
+              ;;
+            check_run)
+              [[ "$CHECK_STATUS" == completed && "$CHECK_NAME" != 'Rady dependasolve gate' && "$CHECK_NAME" != Rady\ dependasolve\ /* ]] && one "$PR_NUMBER"
+              ;;
+            workflow_dispatch)
+              if [[ -n "$PR_NUMBER" ]]; then one "$PR_NUMBER"; else backlog; fi
+              ;;
+            push|schedule) backlog ;;
+            issue_comment) comment ;;
+          esac
+          emit
+
   review:
     name: Rady dependasolve gate
+    needs: select
+    if: needs.select.outputs.has-prs == 'true'
     permissions:
-      contents: write
+      contents: read
       pull-requests: write
-    uses: keys-i/rady/.github/workflows/solve.yml@1199f48b5f3fc0b694ca515959ce14669dae91f3
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        pr-number: ${{ fromJSON(needs.select.outputs.matrix) }}
+    uses: keys-i/rady/.github/workflows/solve.yml@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
     with:
-      solver-ref: keys-i/rady@1199f48b5f3fc0b694ca515959ce14669dae91f3
+      solver-ref: keys-i/rady@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
       harness: ${{ vars.RADY_HARNESS || 'codex' }}
-      pr-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number || 0 }}
+      pr-number: ${{ matrix.pr-number }}
+    secrets:
+      app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}
+
+  respond:
+    name: Respond to Rady mention
+    needs: select
+    if: needs.select.outputs.mention == 'true'
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    uses: keys-i/rady/.github/workflows/respond.yml@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
+    with:
+      solver-ref: keys-i/rady@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
+      app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
+      model: ${{ vars.RADY_MODEL || '' }}
+      harness: ${{ vars.RADY_HARNESS || 'codex' }}
+      issue-number: ${{ fromJSON(needs.select.outputs.issue-number) }}
+      comment-id: ${{ fromJSON(needs.select.outputs.comment-id) }}
     secrets:
       app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}
