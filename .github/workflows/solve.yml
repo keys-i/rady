@@ -17,6 +17,10 @@ on:
       model:
         type: string
         default: ''
+      model-choices:
+        description: Comma-separated native models available to Rady's local selector
+        type: string
+        default: ''
       harness:
         description: Installed, authenticated native agent CLI
         type: string
@@ -278,6 +282,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
           RADY_MODEL: ${{ inputs.model }}
+          RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
           RADY_HARNESS: ${{ inputs.harness }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
@@ -356,6 +361,7 @@ jobs:
           BASE_SHA: ${{ steps.pr-state.outputs.base_sha }}
           SPEC: ${{ steps.repair-spec.outputs.spec }}
           RADY_MODEL: ${{ inputs.model }}
+          RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
           RADY_HARNESS: ${{ inputs.harness }}
           RESULT: ${{ runner.temp }}/rady-replacement.json
         run: |

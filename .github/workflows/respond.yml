@@ -16,14 +16,15 @@ on:
       comment-id:
         required: true
         type: number
-      model:
-        type: string
-        default: ''
-      harness:
-        type: string
-        default: codex
+      gemini-private-ok:
+        default: false
+        type: boolean
     secrets:
       app-private-key:
+        required: true
+      gemini-api-key:
+        required: true
+      cerebras-api-key:
         required: true
 
 permissions: {}
@@ -64,8 +65,8 @@ jobs:
 
   respond:
     needs: preflight
-    runs-on: self-hosted
-    timeout-minutes: 35
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions: {}
     steps:
       - name: Validate trusted solver source
@@ -86,10 +87,6 @@ jobs:
           persist-credentials: false
       - name: Build trusted Rady
         run: cargo build --release --locked
-      - name: Verify native agent harness
-        env:
-          RADY_HARNESS: ${{ inputs.harness }}
-        run: target/release/rady agent doctor --harness "$RADY_HARNESS"
       - name: Create repository-scoped Rady App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -109,12 +106,13 @@ jobs:
           GH_REPO: ${{ github.repository }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           COMMENT_ID: ${{ inputs.comment-id }}
-          RADY_HARNESS: ${{ inputs.harness }}
-          RADY_MODEL: ${{ inputs.model }}
+          RADY_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
+          RADY_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
+          RADY_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+          RADY_GEMINI_PRIVATE_OK: ${{ inputs.gemini-private-ok }}
         run: |
           set -euo pipefail
           target/release/rady agent respond \
             --repo "$GH_REPO" \
             --issue "$ISSUE_NUMBER" \
-            --comment "$COMMENT_ID" \
-            --harness "$RADY_HARNESS"
+            --comment "$COMMENT_ID"
