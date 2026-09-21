@@ -5,6 +5,7 @@ use std::fmt;
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::time::Duration;
@@ -19,6 +20,7 @@ use crate::apps::Identity;
 use crate::delivery::{self, Config};
 use crate::github::GitHub;
 use crate::quality;
+use crate::repair;
 use crate::reviews;
 use crate::setup::{self, SourceRef};
 use crate::ui::{OutputMode, Theme, Ui, json_success_document, print_markdown};
@@ -27,7 +29,9 @@ use crate::ui::{OutputMode, Theme, Ui, json_success_document, print_markdown};
 #[command(
     name = "rady",
     version,
-    about = "Human-first, evidence-gated coding and dependency review"
+    about = "Human-first, evidence-gated coding and dependency review",
+    disable_help_subcommand = true,
+    after_help = "Examples:\n  rady code \"add structured logging\" --check test\n  rady dependasolve --repo owner/repo --check test --apply\n  rady agent doctor"
 )]
 struct Cli {
     #[arg(long, value_enum, global = true, default_value = "auto")]
@@ -43,10 +47,14 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     /// Turn a request into a checked local change or pull request
+    #[command(after_help = "Example:\n  rady code \"fix the parser\" --check test")]
     Code(Box<CodeArgs>),
 
     /// Configure Rady's Dependabot review and merge gates
-    #[command(alias = "dependasolver")]
+    #[command(
+        alias = "dependasolver",
+        after_help = "Example:\n  rady dependasolve --repo owner/repo --check test --apply"
+    )]
     Dependasolve(DependSolveArgs),
 
     /// List retained coding runs
@@ -65,16 +73,45 @@ enum Commands {
     Apply(ApplyArgs),
 
     /// Check native harness logins and delivery tools
+    #[command(hide = true)]
     Doctor(DoctorArgs),
 
-    /// Pass arguments to a native agent harness unchanged
-    Agent(AgentArgs),
+    /// Run or check a native agent harness
+    #[command(
+        disable_help_subcommand = true,
+        after_help = "Examples:\n  rady agent doctor\n  rady agent run --harness codex -- exec --help"
+    )]
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
 
     #[command(hide = true)]
     Resolve(ResolveArgs),
 
     #[command(hide = true)]
     Review(ReviewArgs),
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentCommands {
+    /// Pass arguments to a native agent harness unchanged
+    Run(AgentArgs),
+
+    /// Check native harness logins and delivery tools
+    Doctor(DoctorArgs),
+
+    #[command(hide = true)]
+    Resolve(ResolveArgs),
+
+    #[command(hide = true)]
+    Review(ReviewArgs),
+
+    #[command(hide = true)]
+    Respond(RespondArgs),
+
+    #[command(hide = true)]
+    PrepareRepair(PrepareRepairArgs),
 }
 
 #[derive(Debug, Args)]
@@ -120,6 +157,9 @@ struct CodeArgs {
     #[arg(long)]
     base: Option<String>,
 
+    #[arg(long, hide = true)]
+    expected_start: Option<String>,
+
     #[arg(long = "check", action = clap::ArgAction::Append)]
     checks: Vec<String>,
 
@@ -163,7 +203,7 @@ struct DependSolveArgs {
     #[arg(long)]
     solver_ref: Option<String>,
 
-    #[arg(long = "checks", required = true, num_args = 1..)]
+    #[arg(long = "check", visible_alias = "checks", required = true, num_args = 1..)]
     checks: Vec<String>,
 
     #[arg(long, default_value = ".")]
@@ -229,6 +269,32 @@ struct ReviewArgs {
     pr: u64,
     #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
     harness: Harness,
+}
+
+#[derive(Debug, Args)]
+struct RespondArgs {
+    #[arg(long)]
+    repo: String,
+    #[arg(long)]
+    issue: u64,
+    #[arg(long)]
+    comment: u64,
+    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
+    harness: Harness,
+}
+
+#[derive(Debug, Args)]
+struct PrepareRepairArgs {
+    #[arg(long)]
+    repo: String,
+    #[arg(long)]
+    pr: u64,
+    #[arg(long)]
+    expected_head: String,
+    #[arg(long)]
+    expected_base: String,
+    #[arg(long)]
+    output: PathBuf,
 }
 
 pub fn run() -> Result<()> {
@@ -368,7 +434,14 @@ where
             delivery::apply_run(&arguments.run, &arguments.directory, cli.theme, cli.output)
         }
         Commands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
-        Commands::Agent(arguments) => native_agent(arguments),
+        Commands::Agent { command } => match command {
+            AgentCommands::Run(arguments) => native_agent(arguments),
+            AgentCommands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
+            AgentCommands::Resolve(arguments) => resolve(arguments),
+            AgentCommands::Review(arguments) => review(arguments),
+            AgentCommands::Respond(arguments) => respond(arguments),
+            AgentCommands::PrepareRepair(arguments) => prepare_repair(arguments),
+        },
         Commands::Resolve(arguments) => resolve(arguments),
         Commands::Review(arguments) => review(arguments),
     };
@@ -395,11 +468,11 @@ fn requested_output(arguments: &[OsString]) -> OutputMode {
 
 fn code(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
     let request = quality::load_request(arguments.task.as_deref(), arguments.spec.as_deref())?;
-    let checks = deduplicate(request.checks.into_iter().chain(arguments.checks));
+    let checks = resolve_checks(
+        deduplicate(request.checks.into_iter().chain(arguments.checks)),
+        &arguments.directory,
+    )?;
     let benchmarks = deduplicate(request.benchmarks.into_iter().chain(arguments.benchmarks));
-    if checks.is_empty() {
-        bail!("code requires a --check or JSON spec checks");
-    }
     if arguments.pr && arguments.repo.is_none() {
         bail!("--pr requires --repo");
     }
@@ -434,11 +507,72 @@ fn code(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
         max_lines: arguments.max_lines,
         seed_patch: None,
         resumed_from: None,
-        expected_start: None,
+        expected_start: arguments.expected_start,
         theme,
         output,
     })?;
     Ok(())
+}
+
+fn resolve_checks(checks: Vec<String>, directory: &Path) -> Result<Vec<String>> {
+    let needs_project_check = checks.is_empty() || checks.iter().any(|check| check == "test");
+    if !needs_project_check {
+        return Ok(checks);
+    }
+    let no_checks = checks.is_empty();
+    let project_check = infer_project_check(directory)?;
+    let fallback = no_checks.then(|| project_check.clone());
+    Ok(deduplicate(
+        checks
+            .into_iter()
+            .map(|check| {
+                if check == "test" {
+                    project_check.clone()
+                } else {
+                    check
+                }
+            })
+            .chain(fallback),
+    ))
+}
+
+fn infer_project_check(directory: &Path) -> Result<String> {
+    let present = |marker: &str| directory.join(marker).is_file();
+    let yarn = present("yarn.lock");
+    let pnpm = present("pnpm-lock.yaml");
+    let mut candidates = BTreeSet::new();
+    if present("Cargo.toml") {
+        candidates.insert("cargo test");
+    }
+    if present("go.mod") {
+        candidates.insert("go test ./...");
+    }
+    if pnpm {
+        candidates.insert("pnpm test");
+    }
+    if yarn {
+        candidates.insert("yarn test");
+    }
+    if present("package-lock.json") || (present("package.json") && !yarn && !pnpm) {
+        candidates.insert("npm test");
+    }
+    if present("pyproject.toml") || present("pytest.ini") || present("tox.ini") {
+        candidates.insert("pytest");
+    }
+    match candidates.len() {
+        1 => Ok(candidates
+            .pop_first()
+            .expect("one candidate exists")
+            .to_owned()),
+        0 => bail!(
+            "could not infer a project test command from {}; add --check \"...\"",
+            directory.display()
+        ),
+        _ => bail!(
+            "found multiple project test commands in {}; add --check \"...\"",
+            directory.display()
+        ),
+    }
 }
 
 fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) -> Result<()> {
@@ -477,7 +611,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             .collect::<Vec<_>>()
             .join("\n");
         let markdown = format!(
-            "## {}\n\n**Repository:** `{}`\n\n**Source:** `{}`\n\n### Files\n\n{}\n\n{}",
+            "## {}\n\n**Repository:** `{}`\n\n**Source:** `{}`\n\n**CI evidence:** {}\n\n**Branch protection:** unchanged\n\n### Files\n\n{}\n\n{}",
             if arguments.apply {
                 "Setup complete"
             } else {
@@ -485,9 +619,10 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             },
             arguments.repo,
             source.joined(),
+            arguments.checks.join(", "),
             files,
             if arguments.apply {
-                "Repository settings and App credentials are configured."
+                "Repository settings and App credentials are configured. After this workflow lands on the default branch, it scans existing Dependabot pull requests."
             } else {
                 "Run again with `--apply` after reviewing this preview."
             }
@@ -563,6 +698,7 @@ fn native_agent(arguments: AgentArgs) -> Result<()> {
         "ANTHROPIC_API_KEY",
         "GH_TOKEN",
         "GITHUB_TOKEN",
+        "RADY_PUSH_TOKEN",
     ] {
         command.env_remove(name);
     }
@@ -597,7 +733,7 @@ fn review(arguments: ReviewArgs) -> Result<()> {
     }
     let github = GitHub::new(&arguments.repo, &env::var("GH_TOKEN").unwrap_or_default())?;
     let required: Vec<String> = serde_json::from_str(&env::var("REQUIRED_CHECKS")?)?;
-    let enabled = reviews::review_pr(
+    let outcome = reviews::review_pr(
         &github,
         arguments.pr,
         &required,
@@ -613,7 +749,41 @@ fn review(arguments: ReviewArgs) -> Result<()> {
         &env::var("EXPECTED_HEAD").unwrap_or_default(),
         Duration::from_secs(180),
     )?;
-    action_output(&[("enable_auto_merge", enabled.to_string())])
+    action_output(&[
+        ("approved", outcome.approved.to_string()),
+        ("enable_auto_merge", outcome.enable_auto_merge.to_string()),
+    ])
+}
+
+fn respond(arguments: RespondArgs) -> Result<()> {
+    if arguments.issue == 0 || arguments.comment == 0 {
+        bail!("issue and comment numbers must be positive");
+    }
+    let github = GitHub::new(&arguments.repo, &env::var("GH_TOKEN").unwrap_or_default())?;
+    crate::mentions::respond(
+        &github,
+        arguments.issue,
+        arguments.comment,
+        env::var("RADY_MODEL")
+            .ok()
+            .filter(|value| !value.is_empty())
+            .as_deref(),
+        arguments.harness,
+    )
+}
+
+fn prepare_repair(arguments: PrepareRepairArgs) -> Result<()> {
+    if arguments.pr == 0 {
+        bail!("PR number must be positive");
+    }
+    let github = GitHub::new(&arguments.repo, &env::var("GH_TOKEN").unwrap_or_default())?;
+    repair::prepare(
+        &github,
+        arguments.pr,
+        &arguments.expected_head,
+        &arguments.expected_base,
+        &arguments.output,
+    )
 }
 
 fn action_output(values: &[(&str, String)]) -> Result<()> {
@@ -645,11 +815,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_matrix_covers_unified_commands_themes_and_agent_output() {
+    fn cli_matrix_covers_human_commands_and_help_without_help_subcommands() {
         for arguments in [
             vec!["rady", "--help"],
             vec!["rady", "code", "--help"],
             vec!["rady", "dependasolve", "--help"],
+            vec!["rady", "agent", "--help"],
+            vec!["rady", "agent", "run", "--help"],
+            vec!["rady", "agent", "doctor", "--help"],
             vec!["rady", "runs", "--help"],
             vec!["rady", "inspect", "--help"],
             vec!["rady", "cancel", "--help"],
@@ -662,6 +835,23 @@ mod tests {
             let result = Cli::try_parse_from(arguments);
             assert!(result.is_err_and(|error| error.exit_code() == 0));
         }
+
+        for arguments in [vec!["rady", "help"], vec!["rady", "agent", "help"]] {
+            let result = Cli::try_parse_from(arguments);
+            assert!(result.is_err_and(|error| error.exit_code() != 0));
+        }
+
+        for arguments in [vec!["rady", "--help"], vec!["rady", "agent", "--help"]] {
+            let help = Cli::try_parse_from(arguments)
+                .expect_err("help exits after rendering")
+                .to_string();
+            assert!(
+                !help
+                    .lines()
+                    .any(|line| line.trim_start().starts_with("help")),
+                "help must not be a generated subcommand: {help}"
+            );
+        }
     }
 
     #[test]
@@ -673,47 +863,126 @@ mod tests {
     }
 
     #[test]
-    fn dependasolve_defaults_the_solver_source() {
+    fn code_accepts_the_hidden_pinned_start_revision() {
+        let expected_start = "a".repeat(40);
+        let cli = Cli::try_parse_from([
+            "rady".to_owned(),
+            "code".to_owned(),
+            "repair dependency conflict".to_owned(),
+            "--expected-start".to_owned(),
+            expected_start.clone(),
+        ])
+        .expect("workflow revision must parse");
+        let Commands::Code(arguments) = cli.command else {
+            panic!("code command expected");
+        };
+        assert_eq!(
+            arguments.expected_start.as_deref(),
+            Some(expected_start.as_str())
+        );
+    }
+
+    #[test]
+    fn project_check_inference_avoids_the_posix_test_command() {
+        for (marker, expected) in [
+            ("Cargo.toml", "cargo test"),
+            ("go.mod", "go test ./..."),
+            ("package.json", "npm test"),
+            ("yarn.lock", "yarn test"),
+            ("pnpm-lock.yaml", "pnpm test"),
+            ("pyproject.toml", "pytest"),
+        ] {
+            let directory = tempfile::tempdir().expect("temporary directory");
+            std::fs::write(directory.path().join(marker), "").expect("project marker");
+            assert_eq!(
+                resolve_checks(vec!["test".to_owned()], directory.path())
+                    .expect("marker must infer a project check"),
+                [expected]
+            );
+        }
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let error = resolve_checks(Vec::new(), directory.path())
+            .expect_err("unknown projects need an explicit check");
+        assert!(error.to_string().contains("add --check \"...\""));
+    }
+
+    #[test]
+    fn parser_accepts_agent_hierarchy_and_dependasolve_check_aliases() {
+        for arguments in [
+            vec![
+                "rady",
+                "dependasolve",
+                "--repo",
+                "owner/repo",
+                "--check",
+                "test",
+            ],
+            vec![
+                "rady",
+                "dependasolve",
+                "--repo",
+                "owner/repo",
+                "--checks",
+                "test",
+                "lint",
+            ],
+            vec!["rady", "agent", "run", "--", "exec", "--help"],
+            vec!["rady", "agent", "doctor"],
+            vec![
+                "rady",
+                "agent",
+                "resolve",
+                "--repo",
+                "owner/repo",
+                "--pr",
+                "1",
+            ],
+            vec![
+                "rady",
+                "agent",
+                "review",
+                "--repo",
+                "owner/repo",
+                "--pr",
+                "1",
+            ],
+            vec![
+                "rady",
+                "agent",
+                "respond",
+                "--repo",
+                "owner/repo",
+                "--issue",
+                "1",
+                "--comment",
+                "2",
+            ],
+        ] {
+            Cli::try_parse_from(arguments).expect("command must parse");
+        }
+
         let cli = Cli::try_parse_from([
             "rady",
             "dependasolve",
             "--repo",
             "owner/repo",
-            "--checks",
+            "--check",
             "test",
+            "--no-overwrite",
         ])
         .expect("solver-ref must be optional");
         let Commands::Dependasolve(arguments) = cli.command else {
             panic!("dependasolve command expected");
         };
         assert!(arguments.solver_ref.is_none());
-        assert!(!arguments.no_overwrite);
-        assert_eq!(arguments.identity, Identity::Rady);
-
-        let cli = Cli::try_parse_from([
-            "rady",
-            "dependasolve",
-            "--repo",
-            "owner/repo",
-            "--checks",
-            "test",
-            "--no-overwrite",
-        ])
-        .expect("no-overwrite must be accepted");
-        let Commands::Dependasolve(arguments) = cli.command else {
-            panic!("dependasolve command expected");
-        };
         assert!(arguments.no_overwrite);
+        assert_eq!(arguments.identity, Identity::Rady);
     }
 
     #[test]
     fn json_failures_share_one_bounded_contract() {
         for (arguments, kind, expected) in [
-            (
-                vec!["rady", "--output", "json", "code", "change it"],
-                "runtime",
-                "code requires a --check",
-            ),
             (
                 vec![
                     "rady",

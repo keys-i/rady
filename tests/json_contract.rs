@@ -6,10 +6,18 @@ use serde_json::Value;
 fn json_contract_reaches_the_process_boundary() {
     for (arguments, exit_code, kind, message) in [
         (
-            ["--output", "json", "code", "change"].as_slice(),
+            [
+                "--output",
+                "json",
+                "code",
+                "change",
+                "--directory",
+                "/.rady-json-contract-no-project",
+            ]
+            .as_slice(),
             1,
             "runtime",
-            "code requires a --check",
+            "could not infer a project test command",
         ),
         (
             ["dependasolve", "--output=json"].as_slice(),

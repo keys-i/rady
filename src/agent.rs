@@ -33,6 +33,7 @@ const SENSITIVE_ENVIRONMENT: &[&str] = &[
     "GH_REPO",
     "GH_ENTERPRISE_TOKEN",
     "GITHUB_ENTERPRISE_TOKEN",
+    "RADY_PUSH_TOKEN",
 ];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
@@ -1055,6 +1056,7 @@ mod tests {
             "GH_REPO",
             "GH_ENTERPRISE_TOKEN",
             "GITHUB_ENTERPRISE_TOKEN",
+            "RADY_PUSH_TOKEN",
         ] {
             assert!(SENSITIVE_ENVIRONMENT.contains(&name));
             assert!(!values.contains_key(name));

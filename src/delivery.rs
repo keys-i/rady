@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::MetadataExt;
@@ -59,6 +60,12 @@ pub struct Config {
     pub resumed_from: Option<String>,
     #[serde(default)]
     pub expected_start: Option<String>,
+}
+
+const MAX_PUSH_TOKEN_BYTES: usize = 8_192;
+
+struct GitNetworkAuth {
+    environment: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -199,6 +206,11 @@ pub fn deliver(mut config: Config) -> Result<Value> {
         bail!("--base requires --pr and --repo");
     }
     config.base.clone_from(&base);
+    let network_auth = origin
+        .as_deref()
+        .map(git_network_auth)
+        .transpose()?
+        .flatten();
 
     let branch = format!("rady/{}", random_hex(6)?);
     let stored = RunStore::open()?.create()?;
@@ -264,6 +276,7 @@ pub fn deliver(mut config: Config) -> Result<Value> {
         &branch,
         base.as_deref(),
         origin.as_deref(),
+        network_auth.as_ref(),
         orchestrator_harness,
         planning_model,
         &mut run,
@@ -602,6 +615,7 @@ fn run_delivery(
     branch: &str,
     base: Option<&str>,
     origin: Option<&str>,
+    network_auth: Option<&GitNetworkAuth>,
     orchestrator_harness: Harness,
     planning_model: Option<&str>,
     run: &mut Run,
@@ -609,10 +623,11 @@ fn run_delivery(
     let cancel_file = run.scratch.join("cancelled");
     run.stage("Preparing an isolated workspace")?;
     if config.repo.is_some() && config.expected_start.is_none() {
-        git(
+        git_network(
             directory,
             &["fetch", "--no-tags", "--", "origin", base.unwrap_or("main")],
             Some(&cancel_file),
+            network_auth,
         )?;
     }
     git(
@@ -1139,6 +1154,18 @@ fn run_delivery(
         .take(72)
         .collect::<String>();
     run.ensure_active()?;
+    if let Some(expected_start) = config.expected_start.as_deref() {
+        let base = base.ok_or_else(|| anyhow!("a pinned publication requires a base branch"))?;
+        let origin = origin.ok_or_else(|| anyhow!("a pinned publication requires an origin"))?;
+        require_remote_base(
+            workspace,
+            origin,
+            base,
+            expected_start,
+            Some(&cancel_file),
+            network_auth,
+        )?;
+    }
     git(workspace, &["commit", "-m", &title], Some(&cancel_file))?;
     let commit = git(workspace, &["rev-parse", "HEAD"], Some(&cancel_file))?;
     if git(workspace, &["rev-parse", "HEAD^"], Some(&cancel_file))? != start
@@ -1158,7 +1185,7 @@ fn run_delivery(
         "branch": branch, "commit": commit,
     });
     run.persist()?;
-    git(
+    git_network(
         workspace,
         &[
             "push",
@@ -1167,6 +1194,7 @@ fn run_delivery(
             &format!("{commit}:refs/heads/{branch}"),
         ],
         Some(&cancel_file),
+        network_auth,
     )?;
     run.state["publication"]["status"] = json!("branch pushed");
     run.persist()?;
@@ -1274,6 +1302,135 @@ fn git(directory: &Path, arguments: &[&str], cancel_file: Option<&Path>) -> Resu
         );
     }
     Ok(output.stdout.trim_end_matches('\n').to_owned())
+}
+
+fn git_network(
+    directory: &Path,
+    arguments: &[&str],
+    cancel_file: Option<&Path>,
+    auth: Option<&GitNetworkAuth>,
+) -> Result<String> {
+    let binary = agent::which("git").ok_or_else(|| anyhow!("install Git"))?;
+    let mut environment = BTreeMap::from([("GIT_TERMINAL_PROMPT".to_owned(), "0".to_owned())]);
+    if let Some(auth) = auth {
+        environment.extend(auth.environment.clone());
+    }
+    let output = agent::execute(
+        binary.as_os_str(),
+        arguments,
+        directory,
+        b"",
+        Duration::from_secs(120),
+        &environment,
+        false,
+        cancel_file,
+    )?;
+    if output.code != 0 {
+        bail!(
+            "Git {} failed; inspect the retained workspace before retrying",
+            arguments.first().copied().unwrap_or("command")
+        );
+    }
+    Ok(output.stdout.trim_end_matches('\n').to_owned())
+}
+
+fn require_remote_base(
+    directory: &Path,
+    remote: &str,
+    base: &str,
+    expected_start: &str,
+    cancel_file: Option<&Path>,
+    auth: Option<&GitNetworkAuth>,
+) -> Result<()> {
+    let reference = format!("refs/heads/{base}");
+    let output = git_network(
+        directory,
+        &["ls-remote", "--exit-code", remote, &reference],
+        cancel_file,
+        auth,
+    )?;
+    if parse_remote_ref(&output, &reference)? != expected_start {
+        bail!("the base branch advanced during the task; start a fresh run");
+    }
+    Ok(())
+}
+
+fn parse_remote_ref<'a>(output: &'a str, reference: &str) -> Result<&'a str> {
+    let (object_id, received_reference) = output
+        .split_once('\t')
+        .ok_or_else(|| anyhow!("Git returned an invalid remote reference"))?;
+    if output.matches('\t').count() != 1
+        || received_reference != reference
+        || !matches!(object_id.len(), 40 | 64)
+        || !object_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        bail!("Git returned an invalid remote reference");
+    }
+    Ok(object_id)
+}
+
+fn git_network_auth(remote: &str) -> Result<Option<GitNetworkAuth>> {
+    match env::var("RADY_PUSH_TOKEN") {
+        Ok(token) => Ok(Some(GitNetworkAuth {
+            environment: git_network_environment(remote, &token)?,
+        })),
+        Err(env::VarError::NotPresent) => Ok(None),
+        Err(env::VarError::NotUnicode(_)) => bail!("RADY_PUSH_TOKEN must contain valid text"),
+    }
+}
+
+fn git_network_environment(remote: &str, token: &str) -> Result<BTreeMap<String, String>> {
+    if token.is_empty()
+        || token.len() > MAX_PUSH_TOKEN_BYTES
+        || !token.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        bail!("RADY_PUSH_TOKEN must be 1 to {MAX_PUSH_TOKEN_BYTES} printable ASCII characters");
+    }
+    if remote
+        .strip_prefix("https://github.com/")
+        .is_none_or(str::is_empty)
+    {
+        bail!("RADY_PUSH_TOKEN requires an HTTPS github.com origin");
+    }
+    let credentials = format!("x-access-token:{token}");
+    Ok(BTreeMap::from([
+        ("GIT_CONFIG_COUNT".to_owned(), "1".to_owned()),
+        (
+            "GIT_CONFIG_KEY_0".to_owned(),
+            "http.https://github.com/.extraheader".to_owned(),
+        ),
+        (
+            "GIT_CONFIG_VALUE_0".to_owned(),
+            format!("AUTHORIZATION: Basic {}", base64(credentials.as_bytes())),
+        ),
+    ]))
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        encoded.push(ALPHABET[(chunk[0] >> 2) as usize] as char);
+        encoded.push(
+            ALPHABET[(((chunk[0] & 3) << 4) | (chunk.get(1).copied().unwrap_or(0) >> 4)) as usize]
+                as char,
+        );
+        match chunk {
+            [_, second, third] => {
+                encoded.push(ALPHABET[(((second & 15) << 2) | (third >> 6)) as usize] as char);
+                encoded.push(ALPHABET[(third & 63) as usize] as char);
+            }
+            [_, second] => {
+                encoded.push(ALPHABET[((second & 15) << 2) as usize] as char);
+                encoded.push('=');
+            }
+            [_] => encoded.push_str("=="),
+            _ => unreachable!("chunks are never empty"),
+        }
+    }
+    encoded
 }
 
 fn run_check(
@@ -2137,6 +2294,73 @@ mod tests {
         ] {
             assert_eq!(repository_from_remote(remote).as_deref(), expected);
         }
+    }
+
+    #[test]
+    fn pinned_base_reference_parser_fails_closed() {
+        let reference = "refs/heads/main";
+        for (output, expected, accepted) in [
+            (
+                "0123456789abcdef0123456789abcdef01234567\trefs/heads/main",
+                "0123456789abcdef0123456789abcdef01234567",
+                true,
+            ),
+            (
+                "0123456789abcdef0123456789abcdef01234567\trefs/heads/main",
+                "fedcba9876543210fedcba9876543210fedcba98",
+                false,
+            ),
+            (
+                "0123456789abcdef0123456789abcdef01234567\trefs/heads/other",
+                "0123456789abcdef0123456789abcdef01234567",
+                false,
+            ),
+            (
+                "0123456789abcdef0123456789abcdef01234567\trefs/heads/main\nextra",
+                "0123456789abcdef0123456789abcdef01234567",
+                false,
+            ),
+            (
+                "short\trefs/heads/main",
+                "0123456789abcdef0123456789abcdef01234567",
+                false,
+            ),
+        ] {
+            assert_eq!(
+                parse_remote_ref(output, reference).is_ok_and(|object_id| object_id == expected),
+                accepted
+            );
+        }
+    }
+
+    #[test]
+    fn network_auth_is_ephemeral_and_limited_to_github_https() -> Result<()> {
+        let environment = git_network_environment("https://github.com/owner/repo.git", "token")?;
+        assert_eq!(environment["GIT_CONFIG_COUNT"], "1");
+        assert_eq!(
+            environment["GIT_CONFIG_KEY_0"],
+            "http.https://github.com/.extraheader"
+        );
+        assert_eq!(
+            environment["GIT_CONFIG_VALUE_0"],
+            "AUTHORIZATION: Basic eC1hY2Nlc3MtdG9rZW46dG9rZW4="
+        );
+        assert!(environment.values().all(|value| !value.contains("token")));
+        for (remote, token) in [
+            ("git@github.com:owner/repo.git", "token"),
+            ("https://example.com/owner/repo.git", "token"),
+            ("https://github.com/owner/repo.git", ""),
+        ] {
+            assert!(git_network_environment(remote, token).is_err());
+        }
+        assert!(
+            git_network_environment(
+                "https://github.com/owner/repo.git",
+                &"x".repeat(MAX_PUSH_TOKEN_BYTES + 1)
+            )
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]

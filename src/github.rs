@@ -39,6 +39,16 @@ impl GitHub {
             .ok_or_else(|| anyhow!("GitHub returned no response"))
     }
 
+    pub fn api_optional(
+        &self,
+        path: &str,
+        payload: Option<&Value>,
+        method: &str,
+    ) -> Result<Option<Value>> {
+        let endpoint = format!("repos/{}/{}", self.repo, path);
+        api_with_token(&endpoint, payload, method, true, Some(&self.token), None)
+    }
+
     pub fn pages(&self, path: &str, key: Option<&str>) -> Result<Vec<Value>> {
         let mut rows = Vec::new();
         for page in 1..32 {

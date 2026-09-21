@@ -12,6 +12,12 @@ use crate::agent::Harness;
 use crate::github::GitHub;
 use crate::model::{INSTRUCTIONS, ModelReview, Risk, model_review};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ReviewOutcome {
+    pub approved: bool,
+    pub enable_auto_merge: bool,
+}
+
 pub fn resolve(github: &GitHub, number: u64) -> Result<(Value, bool)> {
     let pull = github.api(&format!("pulls/{number}"), None, "GET")?;
     if pull["state"] != "open" || pull["draft"].as_bool() != Some(false) {
@@ -89,8 +95,14 @@ pub fn checks(github: &GitHub, head: &str) -> Result<Vec<Value>> {
     Ok(rows)
 }
 
-pub fn ci_blockers(rows: &[Value], required: &[String], protection: &Value) -> Result<Vec<String>> {
-    let status = &protection["required_status_checks"];
+pub fn ci_blockers(
+    rows: &[Value],
+    required: &[String],
+    protection: Option<&Value>,
+) -> Result<Vec<String>> {
+    let status = protection
+        .and_then(|value| value.get("required_status_checks"))
+        .unwrap_or(&Value::Null);
     let bindings: BTreeMap<String, i64> = status["checks"]
         .as_array()
         .into_iter()
@@ -116,19 +128,6 @@ pub fn ci_blockers(rows: &[Value], required: &[String], protection: &Value) -> R
         .cloned()
         .collect();
     let mut blockers = Vec::new();
-    if protection["enforce_admins"]["enabled"].as_bool() != Some(true)
-        || status["strict"].as_bool() != Some(true)
-    {
-        blockers.push(
-            "Required checks must be enforced on an up-to-date branch before approval".to_owned(),
-        );
-    }
-    if required
-        .iter()
-        .any(|name| !contexts.contains(name) && !bindings.contains_key(name))
-    {
-        blockers.push("Configured required checks are missing from branch protection".to_owned());
-    }
     for name in names {
         let matching: Vec<_> = rows
             .iter()
@@ -160,6 +159,21 @@ pub fn ci_blockers(rows: &[Value], required: &[String], protection: &Value) -> R
         }
     }
     Ok(blockers)
+}
+
+fn auto_merge_ready(protection: Option<&Value>) -> bool {
+    let Some(protection) = protection else {
+        return false;
+    };
+    let status = &protection["required_status_checks"];
+    protection["enforce_admins"]["enabled"].as_bool() == Some(true)
+        && status["strict"].as_bool() == Some(true)
+        && (status["contexts"]
+            .as_array()
+            .is_some_and(|contexts| !contexts.is_empty())
+            || status["checks"]
+                .as_array()
+                .is_some_and(|checks| !checks.is_empty()))
 }
 
 pub fn files_context(github: &GitHub, number: u64, count: usize) -> Result<(Vec<Value>, bool)> {
@@ -230,7 +244,7 @@ pub fn compatibility(raw: &str) -> Option<f64> {
         .filter(|value| value.is_finite() && (0.0..=100.0).contains(value))
 }
 
-fn allowed_dependency_path(path: &str) -> bool {
+pub(crate) fn allowed_dependency_path(path: &str) -> bool {
     if path.is_empty()
         || path.starts_with('/')
         || path.contains('\\')
@@ -320,7 +334,7 @@ pub fn decision(
     review: &ModelReview,
     context: &Value,
     required: &[String],
-    protection: &Value,
+    protection: Option<&Value>,
 ) -> Result<(&'static str, Vec<String>)> {
     let mut blockers = review.blockers.clone();
     blockers.extend(ci_blockers(
@@ -386,12 +400,7 @@ fn repair_handoff(
     context: &Value,
     blockers: &[String],
 ) {
-    lines.extend([String::new(), "Next safe action".to_owned()]);
     if ci_wait_only(blockers) {
-        lines.push(
-            "Wait for CI to report on this commit. Rady rechecks completed GitHub Actions workflows and third-party check runs; legacy commit statuses need a manual workflow re-run"
-                .to_owned(),
-        );
         return;
     }
 
@@ -441,8 +450,7 @@ fn repair_handoff(
     lines.extend([
         "- Allowed files: approved manifests, lockfiles, Actions workflows and Dockerfiles only"
             .to_owned(),
-        "- Required outcome: every configured and protected check passes on an up-to-date branch"
-            .to_owned(),
+        "- Required outcome: every configured and protected check passes on this commit".to_owned(),
         "- Blockers:".to_owned(),
     ]);
     lines.extend(unique.into_iter().take(12).map(|blocker| {
@@ -451,6 +459,40 @@ fn repair_handoff(
             markdown_text(&blocker.chars().take(500).collect::<String>())
         )
     }));
+}
+
+fn safe_https_link(label: &str, url: &str) -> String {
+    let label = markdown_text(label);
+    if url.starts_with("https://")
+        && !url.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || character == '<'
+                || character == '>'
+        })
+    {
+        format!("[{label}](<{url}>)")
+    } else {
+        label
+    }
+}
+
+fn ci_snapshot(checks: &[Value]) -> String {
+    let successful = checks
+        .iter()
+        .filter(|check| check["state"].as_str() == Some("success"))
+        .count();
+    format!("{successful}/{} checks successful", checks.len())
+}
+
+fn next_action(event: &str, blockers: &[String]) -> &'static str {
+    if event == "APPROVE" {
+        "Review the Files changed tab, then use GitHub's Merge control when it is enabled"
+    } else if ci_wait_only(blockers) {
+        "Wait for the named checks to finish on the reviewed head, then rerun Rady"
+    } else {
+        "Resolve the blockers below, then rerun Rady on the new head"
+    }
 }
 
 pub fn render(
@@ -465,43 +507,84 @@ pub fn render(
     } else {
         "Rady"
     };
+    let ready = event == "APPROVE";
+    let head = context["head"].as_str().unwrap_or_default();
+    let checks = context["checks"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    let files = context["files"]
+        .as_array()
+        .map(Vec::as_slice)
+        .unwrap_or_default();
     let mut lines = vec![
         marker.to_owned(),
-        format!("### {name}"),
+        format!(
+            "### {name} — {}",
+            if ready { "Ready to merge" } else { "Hold" }
+        ),
         String::new(),
-        markdown_text(&review.summary),
+        format!(
+            "Reviewed head: `{}` · CI snapshot: {}",
+            head.chars().take(12).collect::<String>(),
+            ci_snapshot(checks)
+        ),
         String::new(),
     ];
+    if ready {
+        lines.push("The supplied diff and required check evidence are approved. GitHub remains the source of truth for mergeability.".to_owned());
+    } else {
+        lines.push("This review is not approving the PR yet.".to_owned());
+    }
+    lines.extend([String::new(), "What changed".to_owned()]);
+    if files.is_empty() {
+        lines.push("- No changed-file evidence was supplied".to_owned());
+    } else {
+        lines.extend(files.iter().take(12).map(|file| {
+            format!(
+                "- `{}` · +{} −{}",
+                markdown_text(file["filename"].as_str().unwrap_or("unknown")),
+                file["additions"].as_u64().unwrap_or_default(),
+                file["deletions"].as_u64().unwrap_or_default(),
+            )
+        }));
+        if files.len() > 12 {
+            lines.push(format!("- …and {} more files", files.len() - 12));
+        }
+    }
+    lines.extend([String::new(), "Checks".to_owned()]);
+    if checks.is_empty() {
+        lines.push("- No GitHub check evidence was supplied".to_owned());
+    } else {
+        lines.extend(checks.iter().take(20).map(|item| {
+            format!(
+                "- {} — {}",
+                safe_https_link(
+                    item["name"].as_str().unwrap_or("unknown"),
+                    item["url"].as_str().unwrap_or_default()
+                ),
+                markdown_text(item["state"].as_str().unwrap_or("unknown"))
+            )
+        }));
+        if checks.len() > 20 {
+            lines.push(format!("- …and {} more checks", checks.len() - 20));
+        }
+    }
+    lines.extend([
+        String::new(),
+        "Next action".to_owned(),
+        next_action(event, blockers).to_owned(),
+        String::new(),
+        markdown_text(&review.summary),
+    ]);
+    if !review.observations.is_empty() {
+        lines.extend([String::new(), "Notes".to_owned()]);
+    }
     lines.extend(
         review
             .observations
             .iter()
             .map(|item| format!("- {}", markdown_text(item))),
-    );
-    lines.extend([
-        String::new(),
-        format!(
-            "CI for `{}`",
-            context["head"]
-                .as_str()
-                .unwrap_or_default()
-                .chars()
-                .take(12)
-                .collect::<String>()
-        ),
-    ]);
-    lines.extend(
-        context["checks"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|item| {
-                format!(
-                    "- {} — {}",
-                    markdown_text(item["name"].as_str().unwrap_or("unknown")),
-                    markdown_text(item["state"].as_str().unwrap_or("unknown"))
-                )
-            }),
     );
     if context["dependency"].as_bool() == Some(true) {
         lines.extend([
@@ -534,14 +617,9 @@ pub fn render(
                 .map(|item| format!("- {}", markdown_text(item))),
         );
     }
-    let verdict = if event == "APPROVE" {
-        "No concerns found in the supplied diff. Approving."
-    } else {
-        "Holding off on approval until this has been checked."
-    };
     lines.extend([
         String::new(),
-        format!("Review - {:?} risk. {verdict}", review.risk),
+        format!("Review - {:?} risk", review.risk),
         String::new(),
         "Reviewed the supplied diff and GitHub check results; this reviewer ran no tests."
             .to_owned(),
@@ -584,7 +662,7 @@ pub fn review_pr(
     maintainer_changes: &str,
     expected_head: &str,
     wait: Duration,
-) -> Result<bool> {
+) -> Result<ReviewOutcome> {
     let slug = Regex::new(r"^[a-z0-9-]+$")?;
     if !slug.is_match(bot_slug)
         || required.is_empty()
@@ -603,7 +681,7 @@ pub fn review_pr(
     let (files, complete) = files_context(github, number, changed_files)?;
     let base_ref = text(&pull, &["base", "ref"])?;
     let endpoint = format!("branches/{}/protection", percent_encode(base_ref));
-    let mut protection = github.api(&endpoint, None, "GET")?;
+    let mut protection = github.api_optional(&endpoint, None, "GET")?;
     let mut rows = checks(github, head)?;
     let deadline = Instant::now() + wait;
     let names: BTreeSet<_> = required.iter().map(String::as_str).collect();
@@ -656,7 +734,11 @@ pub fn review_pr(
             && item["state"] != "DISMISSED"
     }) {
         println!("This commit and CI state already have a review");
-        return Ok(dependency && previous["state"] == "APPROVED");
+        let approved = previous["state"] == "APPROVED";
+        return Ok(ReviewOutcome {
+            approved,
+            enable_auto_merge: dependency && approved && auto_merge_ready(protection.as_ref()),
+        });
     }
     for previous in own.into_iter().filter(|item| item["state"] == "APPROVED") {
         github.api(
@@ -673,8 +755,8 @@ pub fn review_pr(
     if json!(checks(github, head)?) != context["checks"] {
         bail!("CI changed during review; rerun to assess the latest results");
     }
-    protection = github.api(&endpoint, None, "GET")?;
-    let (event, blockers) = decision(&result, &context, required, &protection)?;
+    protection = github.api_optional(&endpoint, None, "GET")?;
+    let (event, blockers) = decision(&result, &context, required, protection.as_ref())?;
     let body = render(&result, &context, event, &blockers, &marker);
     github.api(
         &format!("pulls/{number}/reviews"),
@@ -686,7 +768,11 @@ pub fn review_pr(
         event.to_ascii_lowercase(),
         head.chars().take(12).collect::<String>()
     );
-    Ok(event == "APPROVE" && dependency)
+    let approved = event == "APPROVE";
+    Ok(ReviewOutcome {
+        approved,
+        enable_auto_merge: approved && dependency && auto_merge_ready(protection.as_ref()),
+    })
 }
 
 fn text<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str> {
@@ -759,6 +845,55 @@ mod tests {
     }
 
     #[test]
+    fn ci_evidence_is_independent_from_auto_merge_protection() -> Result<()> {
+        let success = |name: &str| json!({"name": name, "state": "success", "app_id": null});
+        let protected = json!({
+            "enforce_admins": {"enabled": true},
+            "required_status_checks": {"strict": true, "contexts": ["protected"], "checks": []}
+        });
+        let unprotected = json!({
+            "enforce_admins": {"enabled": false},
+            "required_status_checks": {"strict": false, "contexts": [], "checks": []}
+        });
+        for (protection, required, rows, blockers, auto_merge) in [
+            (None, vec!["test"], vec![success("test")], 0, false),
+            (
+                Some(unprotected),
+                vec!["test"],
+                vec![success("test")],
+                0,
+                false,
+            ),
+            (
+                Some(protected),
+                vec!["test"],
+                vec![success("test"), success("protected")],
+                0,
+                true,
+            ),
+            (
+                Some(json!({"required_status_checks": {"contexts": ["protected"]}})),
+                vec!["test"],
+                vec![success("test")],
+                1,
+                false,
+            ),
+        ] {
+            assert_eq!(
+                ci_blockers(
+                    &rows,
+                    &required.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+                    protection.as_ref()
+                )?
+                .len(),
+                blockers
+            );
+            assert_eq!(auto_merge_ready(protection.as_ref()), auto_merge);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn patch_evidence_fails_closed_when_the_diff_is_absent_or_incomplete() {
         for (file, remaining, complete) in [
             (json!({}), 100, false),
@@ -818,6 +953,66 @@ mod tests {
     }
 
     #[test]
+    fn render_leads_with_a_bounded_evidence_snapshot_and_next_action() {
+        let review = ModelReview {
+            summary: "Evidence summary".to_owned(),
+            risk: Risk::Low,
+            observations: vec![],
+            blockers: vec![],
+            minor: vec![],
+        };
+        let context = json!({
+            "dependency": false,
+            "head": "a".repeat(40),
+            "files": [
+                {"filename": "Cargo.toml", "additions": 2, "deletions": 1},
+                {"filename": "src/lib.rs", "additions": 0, "deletions": 4}
+            ],
+            "checks": [
+                {"name": "test", "state": "success", "url": "https://github.com/owner/repo/actions/runs/1"},
+                {"name": "unsafe", "state": "failure", "url": "javascript:alert(1)"}
+            ]
+        });
+        for (event, blockers, heading, action) in [
+            (
+                "APPROVE",
+                vec![],
+                "### Rady — Ready to merge",
+                "use GitHub's Merge control when it is enabled",
+            ),
+            (
+                "COMMENT",
+                vec!["`test` is still running (pending)".to_owned()],
+                "### Rady — Hold",
+                "Wait for the named checks to finish",
+            ),
+            (
+                "COMMENT",
+                vec!["`test` needs attention (failure)".to_owned()],
+                "### Rady — Hold",
+                "Resolve the blockers below",
+            ),
+        ] {
+            let body = render(&review, &context, event, &blockers, "<!-- marker -->");
+            for expected in [
+                heading,
+                "Reviewed head: `aaaaaaaaaaaa` · CI snapshot: 1/2 checks successful",
+                "What changed",
+                "`Cargo.toml` · +2 −1",
+                "`src/lib.rs` · +0 −4",
+                "Checks",
+                "[test](<https://github.com/owner/repo/actions/runs/1>) — success",
+                "unsafe — failure",
+                "Next action",
+                action,
+            ] {
+                assert!(body.contains(expected), "missing {expected} in {body}");
+            }
+            assert!(!body.contains("javascript:"));
+        }
+    }
+
+    #[test]
     fn repair_handoff_distinguishes_waiting_from_replacement_work() {
         let review = ModelReview {
             summary: "Reviewed. Safe handoff test".to_owned(),
@@ -849,11 +1044,8 @@ mod tests {
             let mut lines = Vec::new();
             repair_handoff(&mut lines, &review, &context, &blockers);
             let body = lines.join("\n");
-            assert!(body.contains("Next safe action"));
             if waiting {
-                assert!(body.contains("Wait for CI"));
-                assert!(body.contains("manual workflow re-run"));
-                assert!(!body.contains("replacement PR"));
+                assert!(body.is_empty());
             } else {
                 for expected in [
                     "If a change is required, create a maintainer replacement PR; do not push to the Dependabot branch.",
@@ -863,7 +1055,7 @@ mod tests {
                     "- Update type: version-update:semver-patch",
                     "- Maintainer changes: false",
                     "- Allowed files: approved manifests, lockfiles, Actions workflows and Dockerfiles only",
-                    "- Required outcome: every configured and protected check passes on an up-to-date branch",
+                    "- Required outcome: every configured and protected check passes on this commit",
                 ] {
                     assert!(body.contains(expected), "missing {expected}");
                 }
@@ -952,12 +1144,14 @@ mod tests {
             "update_type": "version-update:semver-patch", "maintainer_changes": "false"
         });
         assert_eq!(
-            decision(&review, &context, &[], &protection).unwrap().0,
+            decision(&review, &context, &[], Some(&protection))
+                .unwrap()
+                .0,
             "APPROVE"
         );
 
         context["dependency"] = json!(true);
-        let (event, blockers) = decision(&review, &context, &[], &protection).unwrap();
+        let (event, blockers) = decision(&review, &context, &[], Some(&protection)).unwrap();
         assert_eq!(event, "COMMENT");
         assert!(
             blockers
