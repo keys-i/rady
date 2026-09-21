@@ -153,6 +153,7 @@ jobs:
       app-client-id: __APP_CLIENT_ID__
       required-checks: '__REQUIRED_CHECKS__'
       model: ${{ vars.RADY_MODEL || '' }}
+      model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}
       harness: ${{ vars.RADY_HARNESS || 'codex' }}
       pr-number: ${{ matrix.pr-number }}
     secrets:
@@ -170,9 +171,10 @@ jobs:
     with:
       solver-ref: __SOURCE_REF__
       app-client-id: __APP_CLIENT_ID__
-      model: ${{ vars.RADY_MODEL || '' }}
-      harness: ${{ vars.RADY_HARNESS || 'codex' }}
       issue-number: ${{ fromJSON(needs.select.outputs.issue-number) }}
       comment-id: ${{ fromJSON(needs.select.outputs.comment-id) }}
+      gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}
     secrets:
       app-private-key: __APP_PRIVATE_KEY__
+      gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}
+      cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}

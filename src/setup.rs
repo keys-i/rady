@@ -228,6 +228,9 @@ fn workflow_run_trigger(root: &Path) -> Result<String> {
             .unwrap_or_else(|| {
                 format!(".github/workflows/{}", entry.file_name().to_string_lossy())
             });
+        if matches!(name.as_str(), "Rady dependasolve" | "Rady response") {
+            continue;
+        }
         names.insert(name);
     }
     if names.is_empty() {
@@ -760,6 +763,15 @@ mod tests {
             temporary.path().join(".github/workflows/ci.yml"),
             "name: CI\non: [pull_request]\n",
         )?;
+        for (file, name) in [
+            ("solve.yml", "Rady dependasolve"),
+            ("respond.yml", "Rady response"),
+        ] {
+            fs::write(
+                temporary.path().join(".github/workflows").join(file),
+                format!("name: {name}\non: [workflow_call]\n"),
+            )?;
+        }
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
         let files = local_files(
             temporary.path(),
@@ -793,6 +805,18 @@ mod tests {
         assert!(!workflow.contains("__RESPONDER_REF__"));
         assert!(workflow.contains("app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}"));
         assert!(workflow.contains("app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}"));
+        assert!(workflow.contains("model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}"));
+        let responder = workflow
+            .rsplit_once("\n  respond:\n")
+            .map(|(_, responder)| responder)
+            .expect("generated responder job");
+        assert!(responder.contains("cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}"));
+        assert!(responder.contains("gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}"));
+        assert!(
+            responder.contains("gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}")
+        );
+        assert!(!responder.contains("model: ${{ vars.RADY_MODEL"));
+        assert!(!responder.contains("harness: ${{ vars.RADY_HARNESS"));
         assert!(!workflow.contains("RADY_APP_CLIENT_ID ||"));
         let legacy = local_files(
             temporary.path(),
