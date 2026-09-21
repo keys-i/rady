@@ -10,7 +10,7 @@ use crate::Result;
 use crate::apps::{self, Identity};
 use crate::github;
 
-const TRUSTED_SOLVER_REPOSITORY: &str = "keys-i/dependasolver";
+const TRUSTED_SOLVER_REPOSITORY: &str = "keys-i/rady";
 
 #[derive(Clone, Debug)]
 pub struct SourceRef {
@@ -19,21 +19,59 @@ pub struct SourceRef {
 }
 
 impl SourceRef {
+    pub fn resolve(value: Option<&str>) -> Result<Self> {
+        match value {
+            Some(value) => Self::parse(value),
+            None => Self::latest(),
+        }
+    }
+
     pub fn parse(value: &str) -> Result<Self> {
-        let (repository, commit) = value.split_once('@').ok_or_else(|| {
-            anyhow!("--solver-ref requires keys-i/dependasolver@40_LOWERCASE_COMMIT_SHA")
-        })?;
+        let (repository, commit) = value
+            .split_once('@')
+            .ok_or_else(|| anyhow!("--solver-ref requires keys-i/rady@40_LOWERCASE_COMMIT_SHA"))?;
         github::validate_repository(repository)?;
-        if repository != TRUSTED_SOLVER_REPOSITORY
-            || commit.len() != 40
-            || !commit
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        {
-            bail!("--solver-ref requires keys-i/dependasolver@40_LOWERCASE_COMMIT_SHA");
+        if repository != TRUSTED_SOLVER_REPOSITORY || !valid_commit(commit) {
+            bail!("--solver-ref requires keys-i/rady@40_LOWERCASE_COMMIT_SHA");
         }
         Ok(Self {
             repository: repository.to_owned(),
+            commit: commit.to_owned(),
+        })
+    }
+
+    fn latest() -> Result<Self> {
+        let repository = github::api(
+            &format!("repos/{TRUSTED_SOLVER_REPOSITORY}"),
+            None,
+            "GET",
+            false,
+        )?
+        .ok_or_else(|| anyhow!("trusted solver repository response was empty"))?;
+        let default_branch = default_branch(&repository)?;
+        let branch = github::api(
+            &format!(
+                "repos/{TRUSTED_SOLVER_REPOSITORY}/branches/{}",
+                percent_encode(default_branch)
+            ),
+            None,
+            "GET",
+            false,
+        )?
+        .ok_or_else(|| anyhow!("trusted solver branch response was empty"))?;
+        Self::from_latest_response(default_branch, &branch)
+    }
+
+    fn from_latest_response(default_branch: &str, branch: &Value) -> Result<Self> {
+        if branch["name"].as_str() != Some(default_branch) {
+            bail!("GitHub returned a different trusted solver branch");
+        }
+        let commit = branch["commit"]["sha"]
+            .as_str()
+            .filter(|commit| valid_commit(commit))
+            .ok_or_else(|| anyhow!("GitHub returned an invalid trusted solver commit"))?;
+        Ok(Self {
+            repository: TRUSTED_SOLVER_REPOSITORY.to_owned(),
             commit: commit.to_owned(),
         })
     }
@@ -42,6 +80,28 @@ impl SourceRef {
     pub fn joined(&self) -> String {
         format!("{}@{}", self.repository, self.commit)
     }
+}
+
+fn default_branch(repository: &Value) -> Result<&str> {
+    if repository["full_name"]
+        .as_str()
+        .is_none_or(|name| !name.eq_ignore_ascii_case(TRUSTED_SOLVER_REPOSITORY))
+    {
+        bail!("GitHub returned a different trusted solver repository");
+    }
+    repository["default_branch"]
+        .as_str()
+        .filter(|branch| {
+            !branch.is_empty() && branch.len() <= 255 && !branch.chars().any(char::is_control)
+        })
+        .ok_or_else(|| anyhow!("trusted solver repository has no valid default branch"))
+}
+
+fn valid_commit(commit: &str) -> bool {
+    commit.len() == 40
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 pub fn checks(values: &[String]) -> Result<Vec<String>> {
@@ -309,19 +369,6 @@ pub fn install(
     let key_name = format!("{prefix}_APP_PRIVATE_KEY");
     let slug_name = format!("{prefix}_APP_SLUG");
     let files = local_files(directory, source, required)?;
-    for (path, content) in files {
-        if path.exists() {
-            continue;
-        }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)?;
-        file.write_all(content.as_bytes())?;
-    }
     let info = github::api(&format!("repos/{repo}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("repository response was empty"))?;
     if info["full_name"]
@@ -331,8 +378,8 @@ pub fn install(
     {
         bail!("the target repository requires administration access");
     }
-    if info["private"].as_bool() != Some(true) {
-        bail!("Rady reviews require a private repository and trusted self-hosted runner");
+    if info["private"].as_bool().is_none() {
+        bail!("repository response omitted visibility");
     }
     if !matches!(
         info["owner"]["type"].as_str(),
@@ -352,6 +399,19 @@ pub fn install(
     .ok_or_else(|| anyhow!("source workflow response was empty"))?;
     if source_file["type"] != "file" {
         bail!("publish the source workflow at the immutable commit first");
+    }
+    for (path, content) in files {
+        if path.exists() {
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+        file.write_all(content.as_bytes())?;
     }
     let branch = percent_encode(info["default_branch"].as_str().unwrap_or_default());
     let endpoint = format!("repos/{repo}/branches/{branch}/protection");
@@ -482,14 +542,63 @@ mod tests {
     #[test]
     fn source_reference_table_covers_repository_and_commit_edges() {
         for (value, valid) in [
-            (format!("keys-i/dependasolver@{}", "a".repeat(40)), true),
+            (format!("keys-i/rady@{}", "a".repeat(40)), true),
             (format!("owner/repo@{}", "a".repeat(40)), false),
-            (format!("keys-i/dependasolver@{}", "A".repeat(40)), false),
-            ("keys-i/dependasolver@short".to_owned(), false),
-            (format!("keys-i/dependasolver@{}", "g".repeat(40)), false),
+            (format!("keys-i/rady@{}", "A".repeat(40)), false),
+            ("keys-i/rady@short".to_owned(), false),
+            (format!("keys-i/rady@{}", "g".repeat(40)), false),
         ] {
             assert_eq!(SourceRef::parse(&value).is_ok(), valid, "{value}");
         }
+    }
+
+    #[test]
+    fn latest_source_response_is_strict_and_immutable() -> Result<()> {
+        let commit = "a".repeat(40);
+        let source = SourceRef::from_latest_response(
+            "main",
+            &json!({"name": "main", "commit": {"sha": commit}}),
+        )?;
+        assert_eq!(source.joined(), format!("keys-i/rady@{commit}"));
+        for (default_branch, response) in [
+            ("main", json!({"name": "other", "commit": {"sha": commit}})),
+            ("main", json!({"name": "main", "commit": {"sha": "short"}})),
+            (
+                "main",
+                json!({"name": "main", "commit": {"sha": "A".repeat(40)}}),
+            ),
+        ] {
+            assert!(
+                SourceRef::from_latest_response(default_branch, &response).is_err(),
+                "{response}"
+            );
+        }
+        for (response, valid) in [
+            (
+                json!({"full_name": "keys-i/rady", "default_branch": "main"}),
+                true,
+            ),
+            (
+                json!({"full_name": "KEYS-I/RADY", "default_branch": "feature/a"}),
+                true,
+            ),
+            (
+                json!({"full_name": "other/rady", "default_branch": "main"}),
+                false,
+            ),
+            (
+                json!({"full_name": "keys-i/rady", "default_branch": ""}),
+                false,
+            ),
+            (
+                json!({"full_name": "keys-i/rady", "default_branch": "bad\nbranch"}),
+                false,
+            ),
+            (json!({}), false),
+        ] {
+            assert_eq!(default_branch(&response).is_ok(), valid, "{response}");
+        }
+        Ok(())
     }
 
     #[test]
@@ -574,7 +683,7 @@ mod tests {
             temporary.path().join(".github/workflows/ci.yml"),
             "name: CI\non: [pull_request]\n",
         )?;
-        let source = SourceRef::parse(&format!("keys-i/dependasolver@{}", "a".repeat(40)))?;
+        let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
         let files = local_files(temporary.path(), &source, &["check".to_owned()])?;
         let workflow = files
             .iter()
@@ -590,9 +699,32 @@ mod tests {
             .find("Suspend stale Dependabot auto-merge")
             .expect("early auto-merge suspension");
         let checkout = solver.find("actions/checkout@").expect("solver checkout");
+        let preflight = solver
+            .find("Validate pull request trust boundary")
+            .expect("public repository preflight");
+        let harness_gate = solver
+            .find("Require a native public review harness")
+            .expect("public harness gate");
+        let review = solver.find("\n  review:\n").expect("review job");
+        assert!(preflight < checkout);
+        assert!(preflight < review);
+        assert!(harness_gate < checkout);
         assert!(suspend < checkout);
-        assert!(solver.contains("^keys-i/dependasolver@([a-f0-9]{40})$"));
-        assert!(solver.contains("repository=keys-i/dependasolver"));
+        assert!(solver.contains("runs-on: ubuntu-latest"));
+        assert!(solver.contains(
+            "  review:\n    needs: preflight\n    if: needs.preflight.outputs.allowed == 'true'"
+        ));
+        assert!(
+            solver.contains(
+                "Public repositories run Rady only for same-repository Dependabot updates"
+            )
+        );
+        assert!(solver.contains(".user.login == \"dependabot[bot]\""));
+        assert!(solver.contains(".head.repo.full_name == $repo"));
+        assert_eq!(solver.matches("actions/checkout@").count(), 1);
+        assert!(solver.contains("repository: ${{ steps.source.outputs.repository }}"));
+        assert!(solver.contains("^keys-i/rady@([a-f0-9]{40})$"));
+        assert!(solver.contains("repository=keys-i/rady"));
         assert!(
             solver
                 .find("Validate trusted solver source")

@@ -159,9 +159,9 @@ struct DependSolveArgs {
     #[arg(long)]
     repo: String,
 
-    /// Trusted solver source as keys-i/dependasolver@40_LOWERCASE_COMMIT_SHA
+    /// Optional trusted solver source; defaults to the latest keys-i/rady commit
     #[arg(long)]
-    solver_ref: String,
+    solver_ref: Option<String>,
 
     #[arg(long = "checks", required = true, num_args = 1..)]
     checks: Vec<String>,
@@ -438,12 +438,13 @@ fn code(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
 }
 
 fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) -> Result<()> {
-    let source = SourceRef::parse(&arguments.solver_ref)?;
-    let mut ui = Ui::new(theme, output, 2);
+    let mut ui = Ui::new(theme, output, 3);
     ui.title(
         "Rady dependasolve",
         "Dependency updates, grounded in evidence",
     );
+    ui.stage("Resolving the trusted solver source");
+    let source = SourceRef::resolve(arguments.solver_ref.as_deref())?;
     ui.stage("Validating repository setup");
     let preview = setup::run(
         &arguments.repo,
@@ -664,6 +665,23 @@ mod tests {
             deduplicate(["test".to_owned(), "lint".to_owned(), "test".to_owned()]),
             ["test", "lint"]
         );
+    }
+
+    #[test]
+    fn dependasolve_defaults_the_solver_source() {
+        let cli = Cli::try_parse_from([
+            "rady",
+            "dependasolve",
+            "--repo",
+            "owner/repo",
+            "--checks",
+            "test",
+        ])
+        .expect("solver-ref must be optional");
+        let Commands::Dependasolve(arguments) = cli.command else {
+            panic!("dependasolve command expected");
+        };
+        assert!(arguments.solver_ref.is_none());
     }
 
     #[test]

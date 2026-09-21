@@ -14,14 +14,14 @@ The default interface is for people who code: compact terminal colour, readable 
 Rady supports macOS and Linux. Homebrew installs the pinned source from this repository and provides both `rady` and the `dependasolver` compatibility command:
 
 ```sh
-brew tap keys-i/rady https://github.com/keys-i/dependasolver
+brew tap keys-i/rady https://github.com/keys-i/rady
 brew install keys-i/rady/rady
 ```
 
 Cargo can install the same immutable revision directly:
 
 ```sh
-cargo install --git https://github.com/keys-i/dependasolver \
+cargo install --git https://github.com/keys-i/rady \
   --rev 482726baf2c19a02737fa29ec6b94ad068608f3b --locked rady
 ```
 
@@ -140,11 +140,10 @@ Preview repository setup before applying it:
 ```sh
 rady dependasolve \
   --repo OWNER/REPO \
-  --solver-ref keys-i/dependasolver@40_CHARACTER_COMMIT_SHA \
   --checks test audit dependency-review
 ```
 
-Review the preview, then add `--apply`. Repeat with `--app rady` to configure the separate Rady review identity. Setup requires GitHub CLI authentication and repository administration access. The reusable workflow accepts only an immutable source SHA and runs account-authenticated agent tooling only on a trusted private self-hosted runner.
+Review the preview, then add `--apply`. Setup resolves the current default-branch commit of `keys-i/rady` and pins that immutable SHA in the workflow. Pass `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to override that source explicitly. Repeat with `--app rady` to configure the separate Rady review identity. Setup requires GitHub CLI authentication and repository administration access. Reviews run on a trusted self-hosted runner. Public repositories first verify the pull request on a GitHub-hosted runner and admit only same-repository Dependabot updates using the bounded Codex or Claude harness; private repositories retain normal Rady pull-request review and custom-adapter support.
 
 Dependasolve approves only low-risk, complete reviews with every configured and protected check passing. It suspends stale Dependabot auto-merge before starting a new review. Auto-merge is restored only after verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Missing evidence holds the change; model confidence never replaces a gate.
 

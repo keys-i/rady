@@ -1,12 +1,12 @@
 [package]
 name = "rady"
-version = "0.1.0"
+version = "0.1.5"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes and Dependabot PR reviews from local agent CLIs"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/keys-i/dependasolver"
+repository = "https://github.com/keys-i/rady"
 keywords = ["coding-agent", "dependabot", "dependency-review", "cli", "developer-tools"]
 categories = ["command-line-utilities", "development-tools"]
 publish = ["crates-io"]

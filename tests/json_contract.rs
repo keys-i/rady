@@ -45,7 +45,7 @@ fn json_contract_reaches_the_process_boundary() {
             "--repo",
             "owner/repo",
             "--solver-ref",
-            &format!("keys-i/dependasolver@{}", "a".repeat(40)),
+            &format!("keys-i/rady@{}", "a".repeat(40)),
             "--checks",
             "test",
             "--directory",

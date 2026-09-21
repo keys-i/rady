@@ -15,9 +15,9 @@ Existing JSON specifications, evidence semantics, harness environment variables 
 
 Coding runs now retain both `run.json` and a self-contained `run.html`. The HTML report renders safe Markdown and LaTeX locally and makes no network requests.
 
-Update the reusable workflow and its `solver-ref` together to the same published 40-character commit from `keys-i/dependasolver`. Other source repositories are rejected before checkout because the workflow builds and runs on the trusted self-hosted runner.
+Setup resolves `keys-i/rady`'s current default-branch commit and pins its immutable 40-character SHA in the reusable workflow. Use `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only when explicitly overriding that source. Other source repositories are rejected before checkout because the workflow builds and runs on the trusted self-hosted runner.
 
-Rady continues to use an authenticated Codex or Claude Code CLI, or an operator-owned command adapter. It does not need `OPENAI_API_KEY`. The review workflow remains limited to private repositories on trusted self-hosted runners.
+Rady continues to use an authenticated Codex or Claude Code CLI, or an operator-owned command adapter. It does not need `OPENAI_API_KEY`. Public repositories admit only same-repository Dependabot updates after a GitHub-hosted preflight and require the bounded Codex or Claude harness. Private repositories retain normal pull-request review and operator-owned command adapters on trusted self-hosted runners.
 
 Keep the existing **Dependasolver** App for Dependabot pull requests and the separate **Rady** App for other reviews. Both need Administration, Contents, Checks and Commit statuses read access plus Pull requests write access. Do not grant a branch-protection bypass.
 

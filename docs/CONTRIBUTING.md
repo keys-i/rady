@@ -13,7 +13,7 @@ cargo build --release --locked
 
 Use `cargo fmt` to apply formatting. For a focused check, select the module or test name, for example `cargo test quality::tests`.
 
-Workflow changes should also pass `actionlint .github/workflows/*.yml` when `actionlint` is installed. The reusable review workflow is for private repositories on trusted self-hosted runners with an authenticated native harness. Never add subscription credentials or model API keys to public workflows.
+Workflow changes should also pass `actionlint .github/workflows/*.yml` when `actionlint` is installed. Reviews use trusted self-hosted runners with an authenticated native harness. Public repositories must pass the GitHub-hosted Dependabot preflight and may use only the bounded Codex or Claude harness. Never add subscription credentials or model API keys to public workflows.
 
 Use Conventional Commit pull-request titles. `fix:` produces a patch release, `feat:` a minor release, and `!` or `BREAKING CHANGE:` a major release. Release Please updates `Cargo.toml` and [CHANGELOG.md](CHANGELOG.md), then creates the tag and release after its release pull request is merged.
 

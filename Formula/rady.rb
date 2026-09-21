@@ -1,7 +1,7 @@
 class Rady < Formula
   desc "Checks agent-made changes and reviews Dependabot pull requests"
-  homepage "https://github.com/keys-i/dependasolver"
-  url "https://github.com/keys-i/dependasolver.git",
+  homepage "https://github.com/keys-i/rady"
+  url "https://github.com/keys-i/rady.git",
       revision: "482726baf2c19a02737fa29ec6b94ad068608f3b"
   version "0.1.0"
   license "MIT"
