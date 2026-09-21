@@ -40,12 +40,10 @@ The compatibility executable `target/release/dependasolver` opens `rady dependas
 
 ## Checked coding changes
 
-Give Rady a request and at least one check:
+Give Rady a request. In a single-language repository it selects the conventional test command; `--check test` requests the same inference explicitly, while a complete command remains available when the repository is unusual:
 
 ```sh
-rady code "Reject blank user names" \
-  --directory /path/to/project \
-  --check "cargo test"
+rady code "Reject blank user names"
 ```
 
 Rady creates an isolated worktree from the checked-out revision, asks the selected native harness to plan and implement the change, enforces scope and size limits, runs checks and optional benchmarks, and obtains a separate structured review. It retains the workspace and evidence whether the run succeeds or stops. It publishes only when `--pr`, an explicit repository, and fixed acceptance checks are present.
@@ -121,8 +119,8 @@ Markdown headings, **bold**, *italics*, `<u>underline</u>`, `<mark>highlight</ma
 Codex is the default. Claude Code and a custom local command are also supported.
 
 ```sh
-rady doctor --harness codex
-rady agent --harness codex -- resume
+rady agent doctor --harness codex
+rady agent run --harness codex -- resume
 ```
 
 For a custom adapter, set `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND`. Input arrives on standard input. Review output must match the requested JSON schema. A budgeted adapter result wraps its value and usage:
@@ -140,13 +138,21 @@ Preview repository setup before applying it:
 ```sh
 rady dependasolve \
   --repo OWNER/REPO \
-  --checks test audit dependency-review
+  --check test \
+  --check audit \
+  --check dependency-review
 ```
 
-Review the preview, then add `--apply`. Setup resolves the current default-branch commit of `keys-i/rady` and pins that immutable SHA in the workflow. Rerunning setup replaces its generated caller workflow by default; pass `--no-overwrite` to refuse changes, while an existing Dependabot configuration is always left untouched. Pass `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to override that source explicitly. Rady reuses a complete `RADY_APP_*` credential set by default and accepts complete legacy `DEPENDASOLVER_APP_*` credentials as a fallback; `--new-app` explicitly starts a new registration. Setup requires GitHub CLI authentication and repository administration access. Reviews run on a trusted self-hosted runner. Public repositories first verify the pull request on a GitHub-hosted runner and admit only same-repository Dependabot updates using the bounded Codex or Claude harness; private repositories retain normal Rady pull-request review and custom-adapter support.
+Review the preview, then add `--apply`. Setup resolves the current default-branch commit of `keys-i/rady` and pins that immutable SHA in the workflow. Rerunning setup replaces its generated caller workflow by default; pass `--no-overwrite` to refuse changes, while an existing Dependabot configuration is always left untouched. Pass `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to override that source explicitly. Rady reuses a complete `RADY_APP_*` credential set by default and accepts complete legacy `DEPENDASOLVER_APP_*` credentials as a fallback; `--new-app` explicitly starts a new registration. Setup requires GitHub CLI authentication and repository administration access.
 
-Dependasolve approves only low-risk, complete reviews with every configured and protected check passing. It suspends stale Dependabot auto-merge before starting a new review. Auto-merge is restored only after verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Missing evidence holds the change; model confidence never replaces a gate.
+Setup never changes branch protection. Each `--check` tells Rady which completed CI evidence to read; it does not execute that name or create a protected status check. `--checks` remains a compatibility alias. Reviews run on a trusted self-hosted runner. Private repositories review every open, non-draft pull request. Public repositories first verify the pull request on a GitHub-hosted runner and admit only same-repository Dependabot updates or same-repository pull requests from an owner, member, or collaborator, using the bounded Codex or Claude harness. Public forks and custom command adapters are rejected.
 
-Setup discovers local GitHub Actions workflows; their completion and third-party check runs trigger a fresh review of the exact Dependabot pull-request head. Legacy commit-status checks remain gated but need a manual workflow dispatch after they settle. A held update says whether to wait for CI or gives a bounded maintainer repair brief; Rady never writes to a Dependabot branch.
+Dependasolve approves only low-risk, complete reviews with every selected and protected check passing. It suspends stale Dependabot auto-merge before starting a new review. Auto-merge is restored only when existing branch protection is strict, administrator-enforced, and has at least one required check, after verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Otherwise Rady posts its evidence and leaves the merge decision with you. Missing evidence holds the change; model confidence never replaces a gate.
+
+Setup discovers local GitHub Actions workflows; their completion and third-party check runs trigger a fresh review of the exact pull-request head. Scheduled and manual runs take a bounded oldest-first pass over every eligible open pull request: all non-drafts in private repositories, or trusted same-repository Dependabot, owner, member, and collaborator pull requests in public repositories. Legacy commit-status checks remain gated but need a manual workflow dispatch after they settle.
+
+For a genuinely conflicted same-repository Dependabot patch or minor update, Rady can ask the native agent harness to recreate that bounded dependency change from the current base. This path requires an approved low-risk diff and selected CI evidence, 95–100% compatibility, no maintainer changes, and only approved manifest, lockfile or workflow paths. The original head and base are pinned and rechecked, and publication stops if the base advances during the run. Rady runs the inferred project test and fixed acceptance check without exposing the App token to either process, then opens a separate replacement PR and links it from the original. It never pushes to or closes the Dependabot PR, and the replacement remains a normal human review and merge decision.
+
+On an issue or pull request, repository owners, members, and collaborators can write `@rady <prompt>` for a guarded, read-only evidence response. `@rady` by itself gives concise usage. Comment requests never edit code, create a change, or publish anything. Mentions from everyone else are treated as untrusted input and cannot start an agent run.
 
 [Upgrading](docs/UPGRADING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)
