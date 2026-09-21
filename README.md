@@ -7,7 +7,7 @@ One command provides two capabilities:
 - `rady code` turns a request into a bounded, checked local change
 - `rady dependasolve` reviews dependency pull requests from their real diff and CI evidence
 
-The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's common brushtail possum identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter. It provides neither a model nor a hosted service, and it does not call a model API directly.
+The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's expressive duck identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter. It provides neither a model nor a hosted service, and it does not call a model API directly.
 
 ## Install
 
@@ -100,7 +100,7 @@ One worker is the efficient default. `--agents 2` through `8` asks the native ha
 Every coding run writes:
 
 - `run.json` for agents and automation
-- `run.html` for people, with responsive type, safe Markdown, LaTeX rendered to MathML, accessible theme controls, a zoologically accurate common brushtail silhouette, restrained terminal detail, and reduced-motion support
+- `run.html` for people, with responsive type, safe Markdown, LaTeX rendered to MathML, accessible theme controls, Rady's expressive duck, restrained terminal detail, and reduced-motion support
 
 Runs stay available after completion or interruption. Use their identifier to inspect evidence, stop active work, restart from a retained patch, or apply a verified result only to a clean directory:
 
@@ -114,7 +114,7 @@ rady apply RUN_ID --directory /path/to/project
 
 `apply` never stages, commits, or publishes changes. It verifies the retained patch and target revision before modifying the directory.
 
-Markdown headings, **bold**, *italics*, `<u>underline</u>`, `<mark>highlight</mark>`, tables, task lists, footnotes, code, and inline or display mathematics render locally. Other raw HTML is escaped, links are protocol-checked, and remote images become readable text. The report is self-contained: no JavaScript, web font, CDN, or network request. The CC0 common brushtail silhouette is by Rachel T Mason via PhyloPic; the interface keeps motion on state and control feedback instead of animating the animal as a cartoon.
+Markdown headings, **bold**, *italics*, `<u>underline</u>`, `<mark>highlight</mark>`, tables, task lists, footnotes, code, and inline or display mathematics render locally. Other raw HTML is escaped, links are protocol-checked, and remote images become readable text. The report is self-contained: no JavaScript, web font, CDN, or network request. Rady's bundled duck settles into view, shifts occasionally while idle, and responds to nearby controls using only short transform and opacity motion; reduced-motion preferences disable those movements.
 
 ## Harnesses
 
@@ -143,7 +143,7 @@ rady dependasolve \
   --checks test audit dependency-review
 ```
 
-Review the preview, then add `--apply`. Setup resolves the current default-branch commit of `keys-i/rady` and pins that immutable SHA in the workflow. Rerunning setup replaces its generated caller workflow by default; pass `--no-overwrite` to refuse changes, while an existing Dependabot configuration is always left untouched. Pass `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to override that source explicitly. Repeat with `--app rady` to configure the separate Rady review identity. Setup requires GitHub CLI authentication and repository administration access. Reviews run on a trusted self-hosted runner. Public repositories first verify the pull request on a GitHub-hosted runner and admit only same-repository Dependabot updates using the bounded Codex or Claude harness; private repositories retain normal Rady pull-request review and custom-adapter support.
+Review the preview, then add `--apply`. Setup resolves the current default-branch commit of `keys-i/rady` and pins that immutable SHA in the workflow. Rerunning setup replaces its generated caller workflow by default; pass `--no-overwrite` to refuse changes, while an existing Dependabot configuration is always left untouched. Pass `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to override that source explicitly. Rady reuses a complete `RADY_APP_*` credential set by default and accepts complete legacy `DEPENDASOLVER_APP_*` credentials as a fallback; `--new-app` explicitly starts a new registration. Setup requires GitHub CLI authentication and repository administration access. Reviews run on a trusted self-hosted runner. Public repositories first verify the pull request on a GitHub-hosted runner and admit only same-repository Dependabot updates using the bounded Codex or Claude harness; private repositories retain normal Rady pull-request review and custom-adapter support.
 
 Dependasolve approves only low-risk, complete reviews with every configured and protected check passing. It suspends stale Dependabot auto-merge before starting a new review. Auto-merge is restored only after verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Missing evidence holds the change; model confidence never replaces a gate.
 

@@ -1,6 +1,6 @@
 [package]
 name = "rady"
-version = "0.1.7"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes and Dependabot PR reviews from local agent CLIs"
@@ -15,7 +15,7 @@ include = [
     "/docs/*.md",
     "/src/*.rs",
     "/src/bin/*.rs",
-    "/src/dependasolver/assets/*.svg",
+    "/src/dependasolver/assets/*.png",
     "/src/dependasolver/templates/*.html",
     "/src/dependasolver/templates/*.yml",
     "/tests/*.rs",

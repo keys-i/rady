@@ -10,9 +10,6 @@ on:
       app-client-id:
         required: true
         type: string
-      rady-app-client-id:
-        type: string
-        default: ''
       required-checks:
         description: JSON array of required CI check names
         required: true
@@ -30,8 +27,6 @@ on:
     secrets:
       app-private-key:
         required: true
-      rady-app-private-key:
-        required: false
 
 permissions: {}
 
@@ -188,27 +183,27 @@ jobs:
         shell: bash
         env:
           DEPENDENCY: ${{ steps.pr.outputs.dependency }}
-          DEPENDASOLVER_ID: ${{ inputs.app-client-id }}
           EXPECTED_DEPENDENCY: ${{ needs.preflight.outputs.dependency }}
           EXPECTED_HEAD: ${{ needs.preflight.outputs.head }}
           HEAD: ${{ steps.pr.outputs.head }}
-          RADY_ID: ${{ inputs.rady-app-client-id }}
+          APP_ID: ${{ inputs.app-client-id }}
+          APP_KEY: ${{ secrets.app-private-key }}
         run: |
           set -euo pipefail
           if [[ "$DEPENDENCY" != "$EXPECTED_DEPENDENCY" || "$HEAD" != "$EXPECTED_HEAD" ]]; then
             echo 'The pull request changed after preflight; rerun on the current state' >&2
             exit 1
           fi
-          if [[ "$DEPENDENCY" != true && ( -z "$RADY_ID" || "$RADY_ID" == "$DEPENDASOLVER_ID" ) ]]; then
-            echo 'Configure a separate Rady App to post normal PR reviews as Rady' >&2
+          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
+            echo 'Configure the selected Rady App client ID and private key' >&2
             exit 1
           fi
       - name: Create repository-scoped GitHub App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
-          client-id: ${{ steps.pr.outputs.dependency == 'true' && inputs.app-client-id || inputs.rady-app-client-id }}
-          private-key: ${{ steps.pr.outputs.dependency == 'true' && secrets.app-private-key || secrets.rady-app-private-key }}
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
           repositories: ${{ github.event.repository.name }}
           permission-administration: read
           permission-contents: read

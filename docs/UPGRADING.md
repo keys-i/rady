@@ -19,11 +19,11 @@ Setup resolves `keys-i/rady`'s current default-branch commit and pins its immuta
 
 Rady continues to use an authenticated Codex or Claude Code CLI, or an operator-owned command adapter. It does not need `OPENAI_API_KEY`. Public repositories admit only same-repository Dependabot updates after a GitHub-hosted preflight and require the bounded Codex or Claude harness. Private repositories retain normal pull-request review and operator-owned command adapters on trusted self-hosted runners.
 
-Keep the existing **Dependasolver** App for Dependabot pull requests and the separate **Rady** App for other reviews. Both need Administration, Contents, Checks and Commit statuses read access plus Pull requests write access. Do not grant a branch-protection bypass.
+Rady uses one **Rady** App for Dependabot and normal pull-request reviews. It needs Administration, Contents, Checks and Commit statuses read access plus Pull requests write access. Do not grant a branch-protection bypass. A complete legacy Dependasolver credential set is accepted only when all Rady credentials are absent; `--app dependasolver` selects that legacy identity explicitly.
 
 | App | Actions variables | Actions secret |
 | --- | --- | --- |
-| Dependasolver | `DEPENDASOLVER_APP_CLIENT_ID`, `DEPENDASOLVER_APP_SLUG` | `DEPENDASOLVER_APP_PRIVATE_KEY` |
 | Rady | `RADY_APP_CLIENT_ID`, `RADY_APP_SLUG` | `RADY_APP_PRIVATE_KEY` |
+| Legacy Dependasolver fallback | `DEPENDASOLVER_APP_CLIENT_ID`, `DEPENDASOLVER_APP_SLUG` | `DEPENDASOLVER_APP_PRIVATE_KEY` |
 
-Run `rady dependasolve` first as a preview, then repeat with `--apply`. Existing Apps are reused after their owner and permissions are verified; `--new-app` replaces credentials only for the selected identity.
+Run `rady dependasolve` first as a preview, then repeat with `--apply`. It defaults to Rady and reuses a complete `RADY_APP_*` set after owner and permission verification. `--new-app` forces registration for the selected identity.

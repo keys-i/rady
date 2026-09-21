@@ -13,9 +13,10 @@ use tempfile::Builder;
 
 use crate::Result;
 use crate::github;
-use crate::ui::POSSUM_MARK;
+use crate::ui::RADY_DUCK_PNG;
 
 pub const APP_OWNER: &str = "keys-i";
+const DUCK_ROUTE: &str = "/rady-duck.png";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum Identity {
@@ -337,6 +338,10 @@ fn handle_registration_request(
         respond(stream, 400, "Bad request", nonce)?;
         return Ok(None);
     }
+    if target == DUCK_ROUTE {
+        respond_duck(stream)?;
+        return Ok(None);
+    }
     if target == start {
         respond(stream, 200, form, nonce)?;
         return Ok(None);
@@ -362,10 +367,20 @@ fn handle_registration_request(
 fn respond(stream: &mut TcpStream, status: u16, body: &str, nonce: &str) -> Result<()> {
     let label = if status == 200 { "OK" } else { "Bad Request" };
     let response = format!(
-        "HTTP/1.1 {status} {label}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; style-src 'nonce-{nonce}'; form-action https://github.com; frame-ancestors 'none'; base-uri 'none'\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {label}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; img-src 'self'; style-src 'nonce-{nonce}'; form-action https://github.com; frame-ancestors 'none'; base-uri 'none'\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(response.as_bytes())?;
+    Ok(())
+}
+
+fn respond_duck(stream: &mut TcpStream) -> Result<()> {
+    write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n",
+        RADY_DUCK_PNG.len()
+    )?;
+    stream.write_all(RADY_DUCK_PNG)?;
     Ok(())
 }
 
@@ -375,7 +390,7 @@ fn setup_page(title: &str, content: &str, nonce: &str, identity: Identity) -> St
         .replace("$title", &escape_html(title))
         .replace("$content", content)
         .replace("$nonce", &escape_html(nonce))
-        .replace("$mascot", POSSUM_MARK)
+        .replace("$mascot", DUCK_ROUTE)
         .replace("$brand", identity.display())
 }
 
@@ -463,38 +478,52 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registration_request_waits_for_browser_bytes() -> Result<()> {
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let address = listener.local_addr()?;
-        let host = address.to_string();
-        let request_host = host.clone();
-        let browser = thread::spawn(move || -> Result<String> {
-            let mut stream = TcpStream::connect(address)?;
-            thread::sleep(Duration::from_millis(20));
-            stream.write_all(b"GET /start HTTP/1.1\r\n")?;
-            thread::sleep(Duration::from_millis(20));
-            stream.write_all(format!("Host: {request_host}\r\n\r\n").as_bytes())?;
-            let mut response = [0_u8; 1_024];
-            let length = stream.read(&mut response)?;
-            Ok(String::from_utf8(response[..length].to_vec())?)
-        });
-        let (mut stream, _) = listener.accept()?;
-        stream.set_nonblocking(true)?;
-        let result = handle_registration_request(
-            &mut stream,
-            &host,
-            "/start",
-            "/callback",
-            "state",
-            "nonce",
-            "Ready",
-            Identity::Rady,
-        )?;
-        assert!(result.is_none());
-        let response = browser
-            .join()
-            .map_err(|_| anyhow!("browser thread panicked"))??;
-        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response:?}");
+    fn registration_routes_serve_fragmented_page_and_duck() -> Result<()> {
+        for (target, content_type, expected_body) in [
+            ("/start", "text/html; charset=utf-8", b"Ready".as_slice()),
+            (DUCK_ROUTE, "image/png", RADY_DUCK_PNG),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0")?;
+            let address = listener.local_addr()?;
+            let host = address.to_string();
+            let request_host = host.clone();
+            let browser = thread::spawn(move || -> Result<Vec<u8>> {
+                let mut stream = TcpStream::connect(address)?;
+                thread::sleep(Duration::from_millis(20));
+                stream.write_all(format!("GET {target} HTTP/1.1\r\n").as_bytes())?;
+                thread::sleep(Duration::from_millis(20));
+                stream.write_all(format!("Host: {request_host}\r\n\r\n").as_bytes())?;
+                let mut response = Vec::new();
+                stream.read_to_end(&mut response)?;
+                Ok(response)
+            });
+            let (mut stream, _) = listener.accept()?;
+            stream.set_nonblocking(true)?;
+            let result = handle_registration_request(
+                &mut stream,
+                &host,
+                "/start",
+                "/callback",
+                "state",
+                "nonce",
+                "Ready",
+                Identity::Rady,
+            )?;
+            assert!(result.is_none());
+            drop(stream);
+            let response = browser
+                .join()
+                .map_err(|_| anyhow!("browser thread panicked"))??;
+            let body_start = response
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| index + 4)
+                .ok_or_else(|| anyhow!("response has no header terminator"))?;
+            let headers = std::str::from_utf8(&response[..body_start])?;
+            assert!(headers.starts_with("HTTP/1.1 200 OK"), "{headers:?}");
+            assert!(headers.contains(&format!("Content-Type: {content_type}")));
+            assert_eq!(&response[body_start..], expected_body, "{target}");
+        }
         Ok(())
     }
 
@@ -544,18 +573,19 @@ mod tests {
     }
 
     #[test]
-    fn setup_page_uses_a_scalable_common_brushtail_mark() {
+    fn setup_page_uses_the_animated_rady_duck() {
         let page = setup_page("Ready", "<p>Safe content</p>", "nonce", Identity::Rady);
-        assert!(page.contains("class=\"possum-art\""));
-        assert!(page.contains("class=\"possum-silhouette\""));
-        assert!(page.contains("Rady common brushtail possum"));
-        assert!(!page.contains("duck"));
-        assert!(!page.contains("possum-pink"));
-        assert!(!page.contains("@keyframes blink"));
+        assert!(page.contains("class=\"duck\""));
+        assert!(page.contains("alt=\"Rady duck\""));
+        assert!(page.contains("src=\"/rady-duck.png\""));
+        assert!(page.contains("@keyframes duck-idle"));
+        assert!(page.contains("@keyframes duck-arrive"));
+        assert!(!page.contains("possum"));
         assert!(page.contains("prefers-reduced-motion"));
         assert!(page.contains("prefers-color-scheme: dark"));
         assert!(page.contains("forced-colors: active"));
         assert!(page.contains("aria-labelledby=\"setup-title\""));
         assert!(!page.contains("base64"));
+        assert!(RADY_DUCK_PNG.starts_with(b"\x89PNG\r\n\x1a\n"));
     }
 }

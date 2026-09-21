@@ -73,12 +73,27 @@
       background: color-mix(in srgb, var(--accent-wash) 50%, var(--paper));
     }
     .identity { display: grid; gap: .65rem; justify-items: start; }
-    .possum {
+    .duck-stage {
+      position: relative;
       display: block;
       width: min(100%, 11.5rem);
-      color: var(--ink);
+      aspect-ratio: 1;
+      isolation: isolate;
+      transform-origin: 50% 90%;
+      transition: transform .18s var(--ease), filter .18s ease;
     }
-    .possum-art { display: block; width: 100%; height: auto; overflow: visible; }
+    .duck { display: block; width: 100%; height: auto; filter: drop-shadow(0 .65rem 1rem var(--shadow)); transform-origin: 50% 90%; }
+    .duck-stage::after {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(105deg, transparent 38%, color-mix(in srgb, var(--accent) 42%, white) 49%, transparent 60%);
+      content: "";
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-125%) skewX(-10deg);
+      -webkit-mask: url("$mascot") center / contain no-repeat;
+      mask: url("$mascot") center / contain no-repeat;
+    }
     .product { display: block; font: 750 .82rem/1.2 var(--mono); letter-spacing: .1em; }
     .artifact { display: block; color: var(--muted); font: .74rem/1.35 var(--mono); }
     .rail-note { max-width: 20ch; margin: 0; color: var(--muted); font-size: .88rem; }
@@ -115,7 +130,16 @@
     .local-note { margin: 2rem 0 0; padding-top: 1rem; border-top: 1px solid var(--edge); }
     @media (prefers-reduced-motion: no-preference) {
       button { transition: filter .16s ease, transform .16s var(--ease), box-shadow .16s ease; }
+      .duck-stage { animation: duck-arrive .42s var(--ease) backwards; }
+      .duck { animation: duck-idle 8s var(--ease) 1.2s infinite; }
+      .duck-stage:hover, main:has(button:hover) .duck-stage { transform: translateY(-3px) rotate(1deg) scale(1.018); }
+      .duck-stage:hover .duck, main:has(button:hover) .duck { animation-play-state: paused; }
+      .duck-stage:hover::after, main:has(button:hover) .duck-stage::after { animation: duck-glint .58s var(--ease); }
+      main:has(button:active) .duck-stage { transform: translateY(1px) scale(.99); }
     }
+    @keyframes duck-arrive { from { opacity: 0; transform: translateY(.55rem) rotate(-1.5deg) scale(.97); } }
+    @keyframes duck-idle { 0%, 86%, 100% { transform: translateY(0) rotate(0); } 89% { transform: translateY(-2px) rotate(-.8deg); } 93% { transform: translateY(-1px) rotate(.8deg); } }
+    @keyframes duck-glint { 0% { opacity: 0; transform: translateX(-125%) skewX(-10deg); } 35% { opacity: .48; } 100% { opacity: 0; transform: translateX(125%) skewX(-10deg); } }
     @media (max-width: 680px) {
       body { padding: 1rem; }
       main { grid-template-columns: 1fr; }
@@ -131,17 +155,19 @@
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      .duck-stage:hover, main:has(button:hover) .duck-stage { transform: none; }
+      .duck-stage::after { display: none; }
     }
     @media (prefers-reduced-transparency: reduce) { body { background: var(--canvas); } }
-    @media (forced-colors: active) { main, .possum, button { forced-color-adjust: auto; } }
+    @media (forced-colors: active) { main, .duck-stage, button { forced-color-adjust: auto; } }
   </style>
 </head>
 <body>
   <main aria-labelledby="setup-title">
     <header class="rail">
       <div class="identity">
-        <span class="possum" role="img" aria-label="$brand common brushtail possum">$mascot</span>
-        <span><span class="product">$brand</span><span class="artifact">Common brushtail / repository setup</span></span>
+        <span class="duck-stage"><img class="duck" src="$mascot" width="512" height="512" alt="Rady duck" decoding="async"></span>
+        <span><span class="product">$brand</span><span class="artifact">Duck / repository setup</span></span>
       </div>
       <p class="rail-note">Review access here, then return to the terminal with the setup intact.</p>
     </header>

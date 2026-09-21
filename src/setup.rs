@@ -127,6 +127,7 @@ pub fn local_files(
     directory: &Path,
     source: &SourceRef,
     required: &[String],
+    identity: Identity,
     overwrite: bool,
 ) -> Result<BTreeMap<PathBuf, String>> {
     let root = directory
@@ -142,6 +143,8 @@ pub fn local_files(
     let caller = include_str!("dependasolver/templates/dependency.solver.yml")
         .replace("__SOLVER_REF__", &workflow_ref)
         .replace("__SOURCE_REF__", &source.joined())
+        .replace("__APP_CLIENT_ID__", app_client_id(identity))
+        .replace("__APP_PRIVATE_KEY__", app_private_key(identity))
         .replace("__WORKFLOW_RUN_TRIGGER__", &workflow_run_trigger(&root)?)
         .replace(
             "__REQUIRED_CHECKS__",
@@ -170,6 +173,20 @@ pub fn local_files(
         }
     }
     Ok(files)
+}
+
+fn app_client_id(identity: Identity) -> &'static str {
+    match identity {
+        Identity::Rady => "${{ vars.RADY_APP_CLIENT_ID }}",
+        Identity::Dependasolver => "${{ vars.DEPENDASOLVER_APP_CLIENT_ID }}",
+    }
+}
+
+fn app_private_key(identity: Identity) -> &'static str {
+    match identity {
+        Identity::Rady => "${{ secrets.RADY_APP_PRIVATE_KEY }}",
+        Identity::Dependasolver => "${{ secrets.DEPENDASOLVER_APP_PRIVATE_KEY }}",
+    }
 }
 
 fn workflow_run_trigger(root: &Path) -> Result<String> {
@@ -412,11 +429,7 @@ pub fn install(
     identity: Identity,
     overwrite: bool,
 ) -> Result<()> {
-    let prefix = identity.prefix();
-    let client_name = format!("{prefix}_APP_CLIENT_ID");
-    let key_name = format!("{prefix}_APP_PRIVATE_KEY");
-    let slug_name = format!("{prefix}_APP_SLUG");
-    let files = local_files(directory, source, required, overwrite)?;
+    let files = local_files(directory, source, required, identity, overwrite)?;
     let info = github::api(&format!("repos/{repo}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("repository response was empty"))?;
     if info["full_name"]
@@ -448,57 +461,35 @@ pub fn install(
     if source_file["type"] != "file" {
         bail!("publish the source workflow at the immutable commit first");
     }
+    let branch = percent_encode(info["default_branch"].as_str().unwrap_or_default());
+    let endpoint = format!("repos/{repo}/branches/{branch}/protection");
+    let existing = if new_app {
+        None
+    } else {
+        existing_app(repo, identity)?
+    };
+    let effective_identity = if let Some(existing) = existing {
+        let effective_identity = existing.identity;
+        verify_existing_app(existing)?;
+        effective_identity
+    } else if new_app {
+        let app = apps::register_app(repo, identity)?;
+        apps::credentials(repo, &app, identity)?;
+        identity
+    } else {
+        bail!(
+            "no existing {} App credentials; use --new-app --apply to register one",
+            identity.display()
+        );
+    };
+    let files = if effective_identity == identity {
+        files
+    } else {
+        local_files(directory, source, required, effective_identity, overwrite)?
+    };
     for (path, content) in files {
         let replace = overwrite && path.ends_with(".github/workflows/dependasolver.yml");
         write_setup_file(&path, content.as_bytes(), replace)?;
-    }
-    let branch = percent_encode(info["default_branch"].as_str().unwrap_or_default());
-    let endpoint = format!("repos/{repo}/branches/{branch}/protection");
-    let key = if new_app {
-        None
-    } else {
-        github::api(
-            &format!("repos/{repo}/actions/secrets/{key_name}"),
-            None,
-            "GET",
-            true,
-        )?
-    };
-    let client = if new_app {
-        None
-    } else {
-        github::api(
-            &format!("repos/{repo}/actions/variables/{client_name}"),
-            None,
-            "GET",
-            true,
-        )?
-    };
-    if key.is_none() != client.is_none() {
-        bail!("incomplete App setup: configure both credentials or use --new-app --apply");
-    }
-    if key.is_none() {
-        let app = apps::register_app(repo, identity)?;
-        apps::credentials(repo, &app, identity)?;
-    } else {
-        let slug = github::api(
-            &format!("repos/{repo}/actions/variables/{slug_name}"),
-            None,
-            "GET",
-            true,
-        )?
-        .and_then(|value| value["value"].as_str().map(ToOwned::to_owned))
-        .unwrap_or_default();
-        let app = apps::public_app(&slug)?;
-        apps::require_app_owner(&app)?;
-        apps::require_permissions(&app)?;
-        if &app["client_id"]
-            != client
-                .as_ref()
-                .map_or(&Value::Null, |value| &value["value"])
-        {
-            bail!("existing App slug and Client ID do not match; no credentials were changed");
-        }
     }
     let protection = github::api(&endpoint, None, "GET", true)?;
     protect(&endpoint, protection.as_ref(), required)?;
@@ -508,6 +499,76 @@ pub fn install(
         "PATCH",
         false,
     )?;
+    Ok(())
+}
+
+struct ExistingApp {
+    identity: Identity,
+    client_id: String,
+    slug: String,
+}
+
+fn existing_app(repo: &str, identity: Identity) -> Result<Option<ExistingApp>> {
+    let primary = credentials(repo, identity)?;
+    if identity == Identity::Dependasolver || primary.is_some() {
+        return Ok(primary);
+    }
+    credentials(repo, Identity::Dependasolver)
+}
+
+fn credentials(repo: &str, identity: Identity) -> Result<Option<ExistingApp>> {
+    let prefix = identity.prefix();
+    let key = github::api(
+        &format!("repos/{repo}/actions/secrets/{prefix}_APP_PRIVATE_KEY"),
+        None,
+        "GET",
+        true,
+    )?;
+    let client = github::api(
+        &format!("repos/{repo}/actions/variables/{prefix}_APP_CLIENT_ID"),
+        None,
+        "GET",
+        true,
+    )?;
+    let slug = github::api(
+        &format!("repos/{repo}/actions/variables/{prefix}_APP_SLUG"),
+        None,
+        "GET",
+        true,
+    )?;
+    match (key, client, slug) {
+        (None, None, None) => Ok(None),
+        (Some(_), Some(client), Some(slug)) => {
+            let client_id = client["value"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow!("incomplete {prefix} App setup: client ID is empty"))?;
+            let slug = slug["value"]
+                .as_str()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow!("incomplete {prefix} App setup: slug is empty"))?;
+            Ok(Some(ExistingApp {
+                identity,
+                client_id: client_id.to_owned(),
+                slug: slug.to_owned(),
+            }))
+        }
+        _ => bail!(
+            "incomplete {prefix} App setup: configure all App credentials or use --new-app --apply"
+        ),
+    }
+}
+
+fn verify_existing_app(existing: ExistingApp) -> Result<()> {
+    let app = apps::public_app(&existing.slug)?;
+    apps::require_app_owner(&app)?;
+    apps::require_permissions(&app)?;
+    if app["client_id"].as_str() != Some(&existing.client_id) {
+        bail!(
+            "existing {} App slug and Client ID do not match; no credentials were changed",
+            existing.identity.display()
+        );
+    }
     Ok(())
 }
 
@@ -524,7 +585,7 @@ pub fn run(
 ) -> Result<Value> {
     github::validate_repository(repo)?;
     let required = checks(required)?;
-    let files = local_files(directory, source, &required, overwrite)?;
+    let files = local_files(directory, source, &required, identity, overwrite)?;
     let preview = json!({
         "repository": repo,
         "source": source.joined(),
@@ -652,8 +713,23 @@ mod tests {
         fs::write(&workflow, "existing workflow\n")?;
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "b".repeat(40)))?;
 
-        assert!(local_files(temporary.path(), &source, &["test".into()], false).is_err());
-        let files = local_files(temporary.path(), &source, &["test".into()], true)?;
+        assert!(
+            local_files(
+                temporary.path(),
+                &source,
+                &["test".into()],
+                Identity::Rady,
+                false
+            )
+            .is_err()
+        );
+        let files = local_files(
+            temporary.path(),
+            &source,
+            &["test".into()],
+            Identity::Rady,
+            true,
+        )?;
         let (workflow, generated) = files
             .iter()
             .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
@@ -749,7 +825,13 @@ mod tests {
             "name: CI\non: [pull_request]\n",
         )?;
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
-        let files = local_files(temporary.path(), &source, &["check".to_owned()], true)?;
+        let files = local_files(
+            temporary.path(),
+            &source,
+            &["check".to_owned()],
+            Identity::Rady,
+            true,
+        )?;
         let workflow = files
             .iter()
             .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
@@ -759,6 +841,24 @@ mod tests {
         assert!(workflow.contains("workflow_run:"));
         assert!(workflow.contains("workflows: [\"CI\"]"));
         assert!(workflow.contains("name: Rady dependasolve gate"));
+        assert!(workflow.contains("app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}"));
+        assert!(workflow.contains("app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}"));
+        assert!(!workflow.contains("RADY_APP_CLIENT_ID ||"));
+        let legacy = local_files(
+            temporary.path(),
+            &source,
+            &["check".to_owned()],
+            Identity::Dependasolver,
+            true,
+        )?;
+        let legacy = legacy
+            .iter()
+            .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
+            .map(|(_, content)| content)
+            .expect("legacy workflow");
+        assert!(legacy.contains("app-client-id: ${{ vars.DEPENDASOLVER_APP_CLIENT_ID }}"));
+        assert!(legacy.contains("app-private-key: ${{ secrets.DEPENDASOLVER_APP_PRIVATE_KEY }}"));
+        assert!(!legacy.contains("RADY_APP_CLIENT_ID"));
         let solver = include_str!("../.github/workflows/solve.yml");
         let suspend = solver
             .find("Suspend stale Dependabot auto-merge")
@@ -790,6 +890,24 @@ mod tests {
         assert!(solver.contains("repository: ${{ steps.source.outputs.repository }}"));
         assert!(solver.contains("^keys-i/rady@([a-f0-9]{40})$"));
         assert!(solver.contains("repository=keys-i/rady"));
+        assert!(solver.contains("inputs.app-client-id"));
+        assert!(solver.contains("secrets.app-private-key"));
+        assert!(solver.contains("Create repository-scoped GitHub App token"));
+        assert!(!solver.contains("rady-app-client-id"));
+        let auto_merge = &solver[solver
+            .find("Require protected checks and enable auto-merge")
+            .expect("auto-merge gate")..];
+        assert!(auto_merge.contains("APP_TOKEN: ${{ steps.app-token.outputs.token }}"));
+        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/setup.rs"));
+        let install = &source[source.find("pub fn install(").expect("install function")..];
+        assert!(
+            install
+                .find("let existing = if new_app")
+                .expect("credential resolution")
+                < install
+                    .find("for (path, content) in files {")
+                    .expect("local writes")
+        );
         assert!(
             solver
                 .find("Validate trusted solver source")

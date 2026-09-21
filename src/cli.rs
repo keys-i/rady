@@ -169,7 +169,7 @@ struct DependSolveArgs {
     #[arg(long, default_value = ".")]
     directory: PathBuf,
 
-    #[arg(long = "app", value_enum, default_value = "dependasolver")]
+    #[arg(long = "app", value_enum, default_value = "rady")]
     identity: Identity,
 
     #[arg(long)]
@@ -688,6 +688,7 @@ mod tests {
         };
         assert!(arguments.solver_ref.is_none());
         assert!(!arguments.no_overwrite);
+        assert_eq!(arguments.identity, Identity::Rady);
 
         let cli = Cli::try_parse_from([
             "rady",

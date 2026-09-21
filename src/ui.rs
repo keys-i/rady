@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 
-// CC0 common brushtail silhouette by Rachel T Mason via PhyloPic
-pub(crate) const POSSUM_MARK: &str =
-    include_str!("dependasolver/assets/common-brushtail-possum.svg");
+pub(crate) const RADY_DUCK_PNG: &[u8] = include_bytes!("dependasolver/assets/rady-app-duck.png");
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
@@ -83,10 +81,10 @@ impl Ui {
             return;
         }
         if self.styled {
-            eprintln!("\x1b[1;{}mRADY // BRUSHTAIL\x1b[0m  {title}", self.accent());
+            eprintln!("\x1b[1;{}mRADY // DUCK\x1b[0m  {title}", self.accent());
             eprintln!("\x1b[2m{subtitle}\x1b[0m\n");
         } else {
-            eprintln!("Rady // Brushtail\n{title}\n{subtitle}\n");
+            eprintln!("Rady // Duck\n{title}\n{subtitle}\n");
         }
     }
 
@@ -268,13 +266,14 @@ pub fn write_report(
             r#"role="status" aria-label="Run stopped""#,
         ),
     };
+    let mascot = format!("data:image/png;base64,{}", base64(RADY_DUCK_PNG));
     let document = REPORT_TEMPLATE
         .replace("{{theme}}", theme_name)
         .replace("{{title}}", &title)
         .replace("{{state}}", state_name)
         .replace("{{state_label}}", state_label)
         .replace("{{state_attributes}}", state_attributes)
-        .replace("{{mascot}}", POSSUM_MARK)
+        .replace("{{mascot}}", &mascot)
         .replace(
             "{{auto_checked}}",
             if theme == Theme::Auto { "checked" } else { "" },
@@ -432,6 +431,30 @@ fn escape_html(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    let mut chunks = bytes.chunks_exact(3);
+    for chunk in &mut chunks {
+        encoded.push(ALPHABET[(chunk[0] >> 2) as usize] as char);
+        encoded.push(ALPHABET[(((chunk[0] & 3) << 4) | (chunk[1] >> 4)) as usize] as char);
+        encoded.push(ALPHABET[(((chunk[1] & 15) << 2) | (chunk[2] >> 6)) as usize] as char);
+        encoded.push(ALPHABET[(chunk[2] & 63) as usize] as char);
+    }
+    let remainder = chunks.remainder();
+    if let [first] = remainder {
+        encoded.push(ALPHABET[(first >> 2) as usize] as char);
+        encoded.push(ALPHABET[((first & 3) << 4) as usize] as char);
+        encoded.push_str("==");
+    } else if let [first, second] = remainder {
+        encoded.push(ALPHABET[(first >> 2) as usize] as char);
+        encoded.push(ALPHABET[(((first & 3) << 4) | (second >> 4)) as usize] as char);
+        encoded.push(ALPHABET[((second & 15) << 2) as usize] as char);
+        encoded.push('=');
+    }
+    encoded
+}
+
 const REPORT_TEMPLATE: &str = r#"<!doctype html>
 <html lang="en" data-theme="{{theme}}">
 <head>
@@ -455,8 +478,8 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     .report { display:grid; grid-template-columns:minmax(14rem,18rem) minmax(0,50rem); align-items:start; justify-content:center; gap:clamp(2rem,5vw,5rem); width:min(100%,76rem); margin:auto; }
     .rail { position:sticky; top:clamp(1rem,4vw,4rem); display:grid; gap:clamp(1.4rem,3vw,2.4rem); }
     .identity { display:grid; gap:.65rem; justify-items:start; }
-    .possum { display:block; width:min(100%,11.5rem); color:var(--ink); }
-    .possum-art { display:block; width:100%; height:auto; overflow:visible; }
+    .duck-frame { display:block; width:min(100%,11.5rem); transform-origin:50% 90%; transition:transform .18s var(--ease); }
+    .duck { display:block; width:100%; height:auto; filter:drop-shadow(0 .65rem 1rem var(--shadow)); transform-origin:50% 90%; }
     .product,.artifact { display:block; }
     .product { font:750 .82rem/1.2 var(--mono); letter-spacing:.1em; }
     .artifact { color:var(--muted); font: .74rem/1.35 var(--mono); }
@@ -508,13 +531,15 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     math { font-size:1.05em; }
     math[display="block"] { max-width:100%; overflow:auto; margin:2rem 0; color:var(--ink); }
     .footnote-definition { color:var(--muted); font-size:.88rem; }
-    @media (prefers-reduced-motion:no-preference) { .progress.active span { animation:tide 1.8s steps(6,end) infinite; } .theme-choice:active,a:active { transform:translateY(1px); } }
+    @media (prefers-reduced-motion:no-preference) { .progress.active span { animation:tide 1.8s steps(6,end) infinite; } .duck-frame { animation:duck-arrive .42s var(--ease) backwards; } .duck { animation:duck-idle 7s var(--ease) 1.2s infinite; } .duck-frame:hover { transform:translateY(-3px) rotate(1deg) scale(1.015); } .duck-frame:hover .duck { animation-play-state:paused; } .theme-choice:active,a:active { transform:translateY(1px); } }
     @keyframes tide { 0% { transform:translateX(-110%); } 55%,100% { transform:translateX(350%); } }
+    @keyframes duck-arrive { from { opacity:0; transform:translateY(.45rem) rotate(-1deg) scale(.98); } }
+    @keyframes duck-idle { 0%,84%,100% { transform:translateY(0) rotate(0); } 88% { transform:translateY(-2px) rotate(-.7deg); } 92% { transform:translateY(-1px) rotate(.7deg); } }
     @media (max-width:780px) { body { padding:1rem; } .report { grid-template-columns:1fr; gap:1.5rem; } .rail { position:static; grid-template-columns:1fr; gap:1.2rem; } .rail h1 { max-width:18ch; font-size:clamp(2rem,11vw,3.5rem); } fieldset { grid-template-columns:repeat(2,minmax(0,1fr)); } legend { grid-column:1/-1; } article { padding:clamp(1.25rem,6vw,2rem); border-radius:var(--sheet-radius); } }
     @media (max-width:420px) { fieldset { grid-template-columns:1fr; } }
     @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; } .progress.active span { width:55%; transform:none; } }
     @media (prefers-reduced-transparency:reduce) { body { background:var(--canvas); } }
-    @media (forced-colors:active) { .possum,.progress,article,pre,code { forced-color-adjust:auto; } .progress span { background:Highlight; } }
+    @media (forced-colors:active) { .duck-frame,.progress,article,pre,code { forced-color-adjust:auto; } .progress span { background:Highlight; } }
     @media print { body { padding:0; background:white; } .report { display:block; width:auto; } .rail { position:static; margin-bottom:2rem; } fieldset { display:none; } article { padding:0; border:0; box-shadow:none; } .progress.active { display:none; } }
   </style>
 </head>
@@ -522,8 +547,8 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
   <main class="report">
     <header class="rail">
       <div class="identity">
-        <span class="possum" role="img" aria-label="Rady common brushtail possum">{{mascot}}</span>
-        <span><span class="product">Rady</span><span class="artifact">Common brushtail / evidence report</span></span>
+        <span class="duck-frame"><img class="duck" src="{{mascot}}" width="512" height="512" alt="Rady duck"></span>
+        <span><span class="product">Rady</span><span class="artifact">Duck / evidence report</span></span>
       </div>
       <div class="stage">
         <h1>{{title}}</h1>
@@ -550,6 +575,18 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    #[test]
+    fn base64_padding_is_table_driven() {
+        for (input, expected) in [
+            (b"".as_slice(), ""),
+            (b"M".as_slice(), "TQ=="),
+            (b"Ma".as_slice(), "TWE="),
+            (b"Man".as_slice(), "TWFu"),
+        ] {
+            assert_eq!(base64(input), expected);
+        }
+    }
 
     #[test]
     fn report_renders_rich_markdown_and_escapes_raw_html() -> Result<()> {
@@ -702,12 +739,11 @@ mod tests {
                 assert!(report.contains("<em>calm</em>"), "{theme:?}");
                 assert!(report.contains("<u>clear</u>"), "{theme:?}");
                 assert!(report.contains("<math"), "{theme:?}");
-                assert!(report.contains("class=\"possum-art\""), "{theme:?}");
-                assert!(report.contains("class=\"possum-silhouette\""), "{theme:?}");
-                assert!(report.contains("Rady common brushtail possum"), "{theme:?}");
-                assert!(!report.contains("duck"), "{theme:?}");
-                assert!(!report.contains("possum-pink"), "{theme:?}");
-                assert!(!report.contains("@keyframes blink"), "{theme:?}");
+                assert!(report.contains("class=\"duck\""), "{theme:?}");
+                assert!(report.contains("alt=\"Rady duck\""), "{theme:?}");
+                assert!(report.contains("data:image/png;base64,"), "{theme:?}");
+                assert!(report.contains("@keyframes duck-idle"), "{theme:?}");
+                assert!(!report.contains("possum"), "{theme:?}");
                 assert!(!report.contains("<script"), "{theme:?}");
                 assert_eq!(
                     report.contains("aria-valuenow=\"100\""),
