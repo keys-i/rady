@@ -232,7 +232,7 @@ fn has_manifest(directory: &Path, names: &[&str], extensions: &[&str]) -> Result
 
 fn dependabot_update(ecosystem: &str, directory: &str) -> String {
     format!(
-        "  - package-ecosystem: {ecosystem}\n    directory: {directory:?}\n    schedule:\n      interval: weekly\n    open-pull-requests-limit: 3\n"
+        "  - package-ecosystem: {ecosystem}\n    directory: {directory:?}\n    schedule:\n      interval: weekly\n    open-pull-requests-limit: 3\n    groups:\n      {ecosystem}-minor-and-patch:\n        patterns: [\"*\"]\n        update-types: [minor, patch]\n"
     )
 }
 
@@ -546,6 +546,7 @@ mod tests {
                 )),
                 "{manifest}"
             );
+            assert!(config.contains(&format!("{ecosystem}-minor-and-patch:")));
             assert!(config.contains("package-ecosystem: github-actions\n    directory: \"/\""));
         }
         for (manifest, ecosystem) in [("setup.py", "pip"), ("solution.sln", "nuget")] {
