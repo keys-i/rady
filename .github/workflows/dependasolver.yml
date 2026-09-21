@@ -111,7 +111,7 @@ jobs:
           }
 
           comment() {
-            [[ "$COMMENT_BODY" =~ ^@rady($|[[:space:]]) ]] || return 0
+            [[ "$COMMENT_BODY" =~ ^@radyybot($|[[:space:]]) ]] || return 0
             (( ${#COMMENT_BODY} <= 4000 )) || return 0
             case "$COMMENT_ASSOCIATION" in
               OWNER|MEMBER|COLLABORATOR) ;;
@@ -151,9 +151,9 @@ jobs:
       max-parallel: 1
       matrix:
         pr-number: ${{ fromJSON(needs.select.outputs.matrix) }}
-    uses: keys-i/rady/.github/workflows/solve.yml@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
+    uses: keys-i/rady/.github/workflows/solve.yml@f9eca00f816c71a7b4340fd076f7a505aebc5e98
     with:
-      solver-ref: keys-i/rady@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
+      solver-ref: keys-i/rady@f9eca00f816c71a7b4340fd076f7a505aebc5e98
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
@@ -170,9 +170,9 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: keys-i/rady/.github/workflows/respond.yml@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
+    uses: keys-i/rady/.github/workflows/respond.yml@f9eca00f816c71a7b4340fd076f7a505aebc5e98
     with:
-      solver-ref: keys-i/rady@b38d06a8a9ae59bf6670ae7fae725887f67a9f03
+      solver-ref: keys-i/rady@f9eca00f816c71a7b4340fd076f7a505aebc5e98
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       model: ${{ vars.RADY_MODEL || '' }}
       harness: ${{ vars.RADY_HARNESS || 'codex' }}
