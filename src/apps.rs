@@ -53,8 +53,9 @@ impl Identity {
 pub fn permissions() -> Value {
     json!({
         "administration": "read",
-        "contents": "read",
+        "contents": "write",
         "checks": "read",
+        "issues": "write",
         "statuses": "read",
         "pull_requests": "write"
     })
@@ -67,7 +68,7 @@ pub fn manifest(repo: &str, callback: &str, identity: Identity) -> Value {
             Identity::Rady => "Rady by keys-i",
         },
         "url": format!("https://github.com/{repo}"),
-        "description": "Rady reviews pull requests from verified diffs and CI evidence, resolves safe dependency updates, and prepares trusted releases.",
+        "description": "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @rady requests.",
         "public": true,
         "hook_attributes": {"active": false, "url": format!("https://github.com/{repo}")},
         "redirect_url": callback,
@@ -130,7 +131,7 @@ pub fn require_permissions(app: &Value) -> Result<()> {
         });
     if !valid {
         bail!(
-            "the App needs Administration, Contents, Checks and Commit statuses read, plus Pull requests write"
+            "the App needs Administration, Checks and Commit statuses read, plus Contents, Issues and Pull requests write"
         );
     }
     Ok(())
@@ -182,7 +183,7 @@ pub fn register_app(repo: &str, identity: Identity) -> Result<Value> {
     let form = setup_page(
         "Connect your repository",
         &format!(
-            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review pull requests from their diff and CI results.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read-only</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
+            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review pull requests from their diff and CI results, safely replace conflicted low-risk Dependabot updates, and respond when a trusted collaborator writes <code>@rady</code>.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read and write</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Issues</dt><dd>Read and write</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
             escape_html(repo),
             escape_html(&action),
             escape_html(&serde_json::to_string(&config)?)
@@ -551,12 +552,17 @@ mod tests {
     }
 
     #[test]
-    fn permissions_accept_equal_or_stronger_read_access() -> Result<()> {
+    fn permissions_require_write_for_mutating_capabilities() -> Result<()> {
         let mut app = json!({"permissions": permissions(), "owner": {"login": APP_OWNER}});
         require_app_owner(&app)?;
         require_permissions(&app)?;
+        app["permissions"]["contents"] = json!("read");
+        assert!(require_permissions(&app).is_err());
         app["permissions"]["contents"] = json!("write");
         require_permissions(&app)?;
+        app["permissions"]["issues"] = json!("read");
+        assert!(require_permissions(&app).is_err());
+        app["permissions"]["issues"] = json!("write");
         app["permissions"]["pull_requests"] = json!("read");
         assert!(require_permissions(&app).is_err());
         Ok(())
@@ -568,7 +574,7 @@ mod tests {
         assert_eq!(manifest["name"], "Rady by keys-i");
         assert_eq!(
             manifest["description"],
-            "Rady reviews pull requests from verified diffs and CI evidence, resolves safe dependency updates, and prepares trusted releases."
+            "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @rady requests."
         );
     }
 

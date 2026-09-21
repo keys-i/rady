@@ -140,8 +140,13 @@ pub fn local_files(
         "{}/.github/workflows/solve.yml@{}",
         source.repository, source.commit
     );
+    let responder_ref = format!(
+        "{}/.github/workflows/respond.yml@{}",
+        source.repository, source.commit
+    );
     let caller = include_str!("dependasolver/templates/dependency.solver.yml")
         .replace("__SOLVER_REF__", &workflow_ref)
+        .replace("__RESPONDER_REF__", &responder_ref)
         .replace("__SOURCE_REF__", &source.joined())
         .replace("__APP_CLIENT_ID__", app_client_id(identity))
         .replace("__APP_PRIVATE_KEY__", app_private_key(identity))
@@ -323,65 +328,6 @@ fn dependabot_update(ecosystem: &str, directory: &str) -> String {
     )
 }
 
-pub fn merged_checks(protection: Option<&Value>, required: &[String]) -> Vec<Value> {
-    let current = protection
-        .and_then(|value| value.get("required_status_checks"))
-        .unwrap_or(&Value::Null);
-    let mut result: Vec<Value> = current["checks"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            Some(json!({
-                "context": item["context"].as_str()?,
-                "app_id": item["app_id"].as_i64().unwrap_or(-1)
-            }))
-        })
-        .collect();
-    let mut present: BTreeSet<String> = result
-        .iter()
-        .filter_map(|item| item["context"].as_str().map(ToOwned::to_owned))
-        .collect();
-    let names = current["contexts"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .chain(required.iter().map(String::as_str));
-    for name in names {
-        if present.insert(name.to_owned()) {
-            result.push(json!({"context": name, "app_id": -1}));
-        }
-    }
-    result
-}
-
-pub fn protect(endpoint: &str, protection: Option<&Value>, required: &[String]) -> Result<()> {
-    let status = json!({"strict": true, "checks": merged_checks(protection, required)});
-    if protection.is_none() {
-        github::api(
-            endpoint,
-            Some(&json!({
-                "required_status_checks": status,
-                "enforce_admins": true,
-                "required_pull_request_reviews": Value::Null,
-                "restrictions": Value::Null
-            })),
-            "PUT",
-            false,
-        )?;
-    } else {
-        github::api(
-            &format!("{endpoint}/required_status_checks"),
-            Some(&status),
-            "PATCH",
-            false,
-        )?;
-        github::api(&format!("{endpoint}/enforce_admins"), None, "POST", false)?;
-    }
-    Ok(())
-}
-
 fn write_setup_file(path: &Path, content: &[u8], overwrite: bool) -> Result<()> {
     let parent = path
         .parent()
@@ -448,21 +394,21 @@ pub fn install(
     ) {
         bail!("only personal and organisation repositories are supported");
     }
-    let source_file = github::api(
-        &format!(
-            "repos/{}/contents/.github/workflows/solve.yml?ref={}",
-            source.repository, source.commit
-        ),
-        None,
-        "GET",
-        false,
-    )?
-    .ok_or_else(|| anyhow!("source workflow response was empty"))?;
-    if source_file["type"] != "file" {
-        bail!("publish the source workflow at the immutable commit first");
+    for workflow in ["solve.yml", "respond.yml"] {
+        let source_file = github::api(
+            &format!(
+                "repos/{}/contents/.github/workflows/{workflow}?ref={}",
+                source.repository, source.commit
+            ),
+            None,
+            "GET",
+            false,
+        )?
+        .ok_or_else(|| anyhow!("source workflow response was empty"))?;
+        if source_file["type"] != "file" {
+            bail!("publish every source workflow at the immutable commit first");
+        }
     }
-    let branch = percent_encode(info["default_branch"].as_str().unwrap_or_default());
-    let endpoint = format!("repos/{repo}/branches/{branch}/protection");
     let existing = if new_app {
         None
     } else {
@@ -491,8 +437,6 @@ pub fn install(
         let replace = overwrite && path.ends_with(".github/workflows/dependasolver.yml");
         write_setup_file(&path, content.as_bytes(), replace)?;
     }
-    let protection = github::api(&endpoint, None, "GET", true)?;
-    protect(&endpoint, protection.as_ref(), required)?;
     github::api(
         &format!("repos/{repo}"),
         Some(&json!({"allow_auto_merge": true, "allow_squash_merge": true})),
@@ -743,14 +687,6 @@ mod tests {
     }
 
     #[test]
-    fn merged_checks_deduplicate_contexts_and_preserve_bindings() {
-        let protection = json!({"required_status_checks": {"contexts": ["test"], "checks": [{"context": "lint", "app_id": 4}]}});
-        let merged = merged_checks(Some(&protection), &["test".to_owned(), "audit".to_owned()]);
-        assert_eq!(merged.len(), 3);
-        assert_eq!(merged[0]["app_id"], 4);
-    }
-
-    #[test]
     fn setup_text_validation_is_table_driven() -> Result<()> {
         assert_eq!(
             checks(&["test".into(), "lint".into(), "test".into()])?,
@@ -839,8 +775,20 @@ mod tests {
             .expect("generated caller workflow");
         assert!(workflow.contains("check_run:"));
         assert!(workflow.contains("workflow_run:"));
+        assert!(workflow.contains("issue_comment:"));
+        assert!(workflow.contains("schedule:"));
+        assert!(workflow.contains("max-parallel: 1"));
+        assert!(workflow.contains("PRIVATE_REPOSITORY: ${{ github.event.repository.private }}"));
+        assert!(workflow.contains(".author_association == \"OWNER\""));
+        assert!(workflow.contains(".author_association == \"MEMBER\""));
+        assert!(workflow.contains(".author_association == \"COLLABORATOR\""));
         assert!(workflow.contains("workflows: [\"CI\"]"));
         assert!(workflow.contains("name: Rady dependasolve gate"));
+        assert!(workflow.contains(&format!(
+            "uses: keys-i/rady/.github/workflows/respond.yml@{}",
+            "a".repeat(40)
+        )));
+        assert!(!workflow.contains("__RESPONDER_REF__"));
         assert!(workflow.contains("app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}"));
         assert!(workflow.contains("app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}"));
         assert!(!workflow.contains("RADY_APP_CLIENT_ID ||"));
@@ -881,12 +829,15 @@ mod tests {
         ));
         assert!(
             solver.contains(
-                "Public repositories run Rady only for same-repository Dependabot updates"
+                "Public repositories run Rady only for same-repository Dependabot or trusted collaborator pull requests"
             )
         );
         assert!(solver.contains(".user.login == \"dependabot[bot]\""));
         assert!(solver.contains(".head.repo.full_name == $repo"));
-        assert_eq!(solver.matches("actions/checkout@").count(), 1);
+        assert!(solver.contains(".author_association == \"OWNER\""));
+        assert!(solver.contains(".author_association == \"MEMBER\""));
+        assert!(solver.contains(".author_association == \"COLLABORATOR\""));
+        assert_eq!(solver.matches("actions/checkout@").count(), 2);
         assert!(solver.contains("repository: ${{ steps.source.outputs.repository }}"));
         assert!(solver.contains("^keys-i/rady@([a-f0-9]{40})$"));
         assert!(solver.contains("repository=keys-i/rady"));
@@ -895,11 +846,13 @@ mod tests {
         assert!(solver.contains("Create repository-scoped GitHub App token"));
         assert!(!solver.contains("rady-app-client-id"));
         let auto_merge = &solver[solver
-            .find("Require protected checks and enable auto-merge")
+            .find("Require protected branch and enable auto-merge")
             .expect("auto-merge gate")..];
-        assert!(auto_merge.contains("APP_TOKEN: ${{ steps.app-token.outputs.token }}"));
+        assert!(auto_merge.contains("GH_TOKEN: ${{ steps.app-token.outputs.token }}"));
+        assert!(!auto_merge.contains("contains($required)"));
         let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/setup.rs"));
-        let install = &source[source.find("pub fn install(").expect("install function")..];
+        let install = &source[source.find("pub fn install(").expect("install function")
+            ..source.find("\nstruct ExistingApp").expect("install end")];
         assert!(
             install
                 .find("let existing = if new_app")
@@ -908,6 +861,7 @@ mod tests {
                     .find("for (path, content) in files {")
                     .expect("local writes")
         );
+        assert!(!install.contains("/branches/{branch}/protection"));
         assert!(
             solver
                 .find("Validate trusted solver source")
