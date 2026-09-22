@@ -151,12 +151,13 @@ jobs:
       max-parallel: 1
       matrix:
         pr-number: ${{ fromJSON(needs.select.outputs.matrix) }}
-    uses: keys-i/rady/.github/workflows/solve.yml@f9eca00f816c71a7b4340fd076f7a505aebc5e98
+    uses: keys-i/rady/.github/workflows/solve.yml@6a19a17e8ec5600e0270362cb4e8137acefd362f
     with:
-      solver-ref: keys-i/rady@f9eca00f816c71a7b4340fd076f7a505aebc5e98
+      solver-ref: keys-i/rady@6a19a17e8ec5600e0270362cb4e8137acefd362f
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
+      model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}
       harness: ${{ vars.RADY_HARNESS || 'codex' }}
       pr-number: ${{ matrix.pr-number }}
     secrets:
@@ -170,13 +171,14 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: keys-i/rady/.github/workflows/respond.yml@f9eca00f816c71a7b4340fd076f7a505aebc5e98
+    uses: keys-i/rady/.github/workflows/respond.yml@6a19a17e8ec5600e0270362cb4e8137acefd362f
     with:
-      solver-ref: keys-i/rady@f9eca00f816c71a7b4340fd076f7a505aebc5e98
+      solver-ref: keys-i/rady@6a19a17e8ec5600e0270362cb4e8137acefd362f
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
-      model: ${{ vars.RADY_MODEL || '' }}
-      harness: ${{ vars.RADY_HARNESS || 'codex' }}
       issue-number: ${{ fromJSON(needs.select.outputs.issue-number) }}
       comment-id: ${{ fromJSON(needs.select.outputs.comment-id) }}
+      gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}
     secrets:
       app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}
+      gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}
+      cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}
