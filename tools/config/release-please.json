@@ -5,7 +5,6 @@
   "packages": {
     ".": {
       "package-name": "rady",
-      "initial-version": "0.1.0",
       "changelog-path": "docs/CHANGELOG.md"
     }
   }

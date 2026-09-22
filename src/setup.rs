@@ -156,7 +156,14 @@ pub fn local_files(
             &serde_json::to_string(required)?.replace('\'', "''"),
         );
     let workflow = safe_path(&root, ".github/workflows/dependasolver.yml")?;
-    let mut files = BTreeMap::from([(workflow.clone(), caller)]);
+    let selector = safe_path(&root, ".github/workflows/scripts/select-review-targets.sh")?;
+    let mut files = BTreeMap::from([
+        (workflow.clone(), caller),
+        (
+            selector.clone(),
+            include_str!("../.github/workflows/scripts/select-review-targets.sh").to_owned(),
+        ),
+    ]);
     let dependabot = [
         safe_path(&root, ".github/dependabot.yml")?,
         safe_path(&root, ".github/dependabot.yaml")?,
@@ -168,7 +175,8 @@ pub fn local_files(
         match fs::symlink_metadata(path) {
             Ok(metadata) => {
                 if !metadata.file_type().is_file()
-                    || (fs::read_to_string(path)? != *content && (!overwrite || path != &workflow))
+                    || (fs::read_to_string(path)? != *content
+                        && (!overwrite || (path != &workflow && path != &selector)))
                 {
                     bail!("refusing to overwrite existing content: {}", path.display());
                 }
@@ -437,7 +445,9 @@ pub fn install(
         local_files(directory, source, required, effective_identity, overwrite)?
     };
     for (path, content) in files {
-        let replace = overwrite && path.ends_with(".github/workflows/dependasolver.yml");
+        let replace = overwrite
+            && (path.ends_with(".github/workflows/dependasolver.yml")
+                || path.ends_with(".github/workflows/scripts/select-review-targets.sh"));
         write_setup_file(&path, content.as_bytes(), replace)?;
     }
     github::api(
@@ -654,38 +664,43 @@ mod tests {
 
     #[test]
     fn generated_workflow_overwrites_by_default_and_can_be_protected() -> Result<()> {
-        let temporary = tempfile::tempdir()?;
-        let workflow = temporary.path().join(".github/workflows/dependasolver.yml");
-        fs::create_dir_all(workflow.parent().expect("workflow parent"))?;
-        fs::write(&workflow, "existing workflow\n")?;
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "b".repeat(40)))?;
-
-        assert!(
-            local_files(
+        for generated_path in [
+            ".github/workflows/dependasolver.yml",
+            ".github/workflows/scripts/select-review-targets.sh",
+        ] {
+            let temporary = tempfile::tempdir()?;
+            let path = temporary.path().join(generated_path);
+            fs::create_dir_all(path.parent().expect("generated file parent"))?;
+            fs::write(&path, "existing generated content\n")?;
+            assert!(
+                local_files(
+                    temporary.path(),
+                    &source,
+                    &["test".into()],
+                    Identity::Rady,
+                    false
+                )
+                .is_err(),
+                "{generated_path} must honour --no-overwrite"
+            );
+            let files = local_files(
                 temporary.path(),
                 &source,
                 &["test".into()],
                 Identity::Rady,
-                false
-            )
-            .is_err()
-        );
-        let files = local_files(
-            temporary.path(),
-            &source,
-            &["test".into()],
-            Identity::Rady,
-            true,
-        )?;
-        let (workflow, generated) = files
-            .iter()
-            .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
-            .expect("generated workflow");
-        write_setup_file(workflow, generated.as_bytes(), true)?;
-        assert_eq!(fs::read_to_string(workflow)?, *generated);
-
-        assert!(write_setup_file(workflow, b"blocked update\n", false).is_err());
-        assert_eq!(fs::read_to_string(workflow)?, *generated);
+                true,
+            )?;
+            let generated = files
+                .iter()
+                .find(|(candidate, _)| candidate.ends_with(generated_path))
+                .map(|(_, content)| content)
+                .expect("generated file content");
+            write_setup_file(&path, generated.as_bytes(), true)?;
+            assert_eq!(fs::read_to_string(&path)?, *generated);
+            assert!(write_setup_file(&path, b"blocked update\n", false).is_err());
+            assert_eq!(fs::read_to_string(&path)?, *generated);
+        }
         Ok(())
     }
 
@@ -785,6 +800,11 @@ mod tests {
             .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
             .map(|(_, content)| content)
             .expect("generated caller workflow");
+        let selector_script = files
+            .iter()
+            .find(|(path, _)| path.ends_with(".github/workflows/scripts/select-review-targets.sh"))
+            .map(|(_, content)| content)
+            .expect("generated selector script");
         assert!(workflow.contains("check_run:"));
         assert!(workflow.contains("workflow_run:"));
         assert!(workflow.contains("issue_comment:"));
@@ -810,15 +830,20 @@ mod tests {
                 "{event} must bypass backlog selection"
             );
         }
-        assert!(
-            selector
-                .contains("if [[ -n \"$PR_NUMBER\" ]]; then one \"$PR_NUMBER\"; else backlog; fi")
-        );
-        assert!(selector.contains("push|schedule) backlog"));
         assert!(selector.contains(
             "group: rady-selection-${{ github.repository }}-${{ inputs.pr-number || 'backlog' }}"
         ));
         assert!(selector.contains("cancel-in-progress: true"));
+        assert!(selector.contains("Check out workflow scripts"));
+        assert!(selector.contains("sparse-checkout: .github/workflows/scripts"));
+        assert!(selector.contains("persist-credentials: false"));
+        assert!(selector.contains("run: bash .github/workflows/scripts/select-review-targets.sh"));
+        assert!(!selector.contains("backlog() {"));
+        assert!(
+            selector_script
+                .contains("if [[ -n \"$PR_NUMBER\" ]]; then one \"$PR_NUMBER\"; else backlog; fi")
+        );
+        assert!(selector_script.contains("push|schedule) backlog"));
         let direct_review = workflow
             .split_once("\n  review-current:\n")
             .and_then(|(_, rest)| rest.split_once("\n  review:\n"))
@@ -853,9 +878,10 @@ mod tests {
         assert!(workflow.contains("schedule:"));
         assert!(workflow.contains("max-parallel: 1"));
         assert!(workflow.contains("PRIVATE_REPOSITORY: ${{ github.event.repository.private }}"));
-        assert!(workflow.contains(".author_association == \"OWNER\""));
-        assert!(workflow.contains(".author_association == \"MEMBER\""));
-        assert!(workflow.contains(".author_association == \"COLLABORATOR\""));
+        assert!(selector_script.contains(".author_association == \"OWNER\""));
+        assert!(selector_script.contains(".author_association == \"MEMBER\""));
+        assert!(selector_script.contains(".author_association == \"COLLABORATOR\""));
+        assert!(selector_script.contains("Rady backfill supports at most 300 open pull requests"));
         assert!(workflow.contains("workflows: [\"CI\"]"));
         assert!(workflow.contains("name: Rady dependasolve gate"));
         assert!(workflow.contains(&format!(
@@ -903,7 +929,12 @@ mod tests {
         let suspend = solver
             .find("Suspend stale Dependabot auto-merge")
             .expect("early auto-merge suspension");
-        let checkout = solver.find("actions/checkout@").expect("solver checkout");
+        let script_checkout = solver
+            .find("Check out trusted workflow scripts")
+            .expect("trusted script checkout");
+        let checkout = solver
+            .find("repository: ${{ steps.source.outputs.repository }}")
+            .expect("solver checkout");
         let preflight = solver
             .find("Validate pull request trust boundary")
             .expect("public repository preflight");
@@ -911,6 +942,7 @@ mod tests {
             .find("Require a native public review harness")
             .expect("public harness gate");
         let review = solver.find("\n  review:\n").expect("review job");
+        assert!(script_checkout < preflight);
         assert!(preflight < checkout);
         assert!(preflight < review);
         assert!(harness_gate < checkout);
@@ -919,17 +951,18 @@ mod tests {
         assert!(solver.contains(
             "  review:\n    needs: preflight\n    if: needs.preflight.outputs.allowed == 'true'"
         ));
+        let trust_script = include_str!("../.github/workflows/scripts/validate-pr-trust.sh");
         assert!(
-            solver.contains(
+            trust_script.contains(
                 "Public repositories run Rady only for same-repository Dependabot or trusted collaborator pull requests"
             )
         );
-        assert!(solver.contains(".user.login == \"dependabot[bot]\""));
-        assert!(solver.contains(".head.repo.full_name == $repo"));
-        assert!(solver.contains(".author_association == \"OWNER\""));
-        assert!(solver.contains(".author_association == \"MEMBER\""));
-        assert!(solver.contains(".author_association == \"COLLABORATOR\""));
-        assert_eq!(solver.matches("actions/checkout@").count(), 2);
+        assert!(trust_script.contains(".user.login == \"dependabot[bot]\""));
+        assert!(trust_script.contains(".head.repo.full_name == $repo"));
+        assert!(trust_script.contains(".author_association == \"OWNER\""));
+        assert!(trust_script.contains(".author_association == \"MEMBER\""));
+        assert!(trust_script.contains(".author_association == \"COLLABORATOR\""));
+        assert_eq!(solver.matches("actions/checkout@").count(), 3);
         assert!(solver.contains("repository: ${{ steps.source.outputs.repository }}"));
         assert!(solver.contains("^keys-i/rady@([a-f0-9]{40})$"));
         assert!(solver.contains("repository=keys-i/rady"));
@@ -958,7 +991,7 @@ mod tests {
             solver
                 .find("Validate trusted solver source")
                 .expect("source gate")
-                < checkout
+                < script_checkout
         );
         assert!(
             !files
