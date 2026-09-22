@@ -125,9 +125,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: keys-i/rady/.github/workflows/solve.yml@9b9f2b391174de77bc95d77cbe3a8bb43c4ed8d4
+    uses: keys-i/rady/.github/workflows/solve.yml@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
     with:
-      solver-ref: keys-i/rady@9b9f2b391174de77bc95d77cbe3a8bb43c4ed8d4
+      solver-ref: keys-i/rady@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
@@ -149,9 +149,9 @@ jobs:
       max-parallel: 1
       matrix:
         pr-number: ${{ fromJSON(needs.select.outputs.matrix) }}
-    uses: keys-i/rady/.github/workflows/solve.yml@9b9f2b391174de77bc95d77cbe3a8bb43c4ed8d4
+    uses: keys-i/rady/.github/workflows/solve.yml@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
     with:
-      solver-ref: keys-i/rady@9b9f2b391174de77bc95d77cbe3a8bb43c4ed8d4
+      solver-ref: keys-i/rady@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
@@ -174,9 +174,9 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: keys-i/rady/.github/workflows/respond.yml@9b9f2b391174de77bc95d77cbe3a8bb43c4ed8d4
+    uses: keys-i/rady/.github/workflows/respond.yml@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
     with:
-      solver-ref: keys-i/rady@9b9f2b391174de77bc95d77cbe3a8bb43c4ed8d4
+      solver-ref: keys-i/rady@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
