@@ -1,11 +1,11 @@
-## Summary
+## Change
 
-<!-- What changes and why? Link an issue if relevant. -->
+<!-- What changed, why, and the related issue if there is one -->
 
 ## Tests
 
-<!-- Commands run and results. -->
+<!-- Commands run and their result -->
 
 ## Risks
 
-<!-- Compatibility, security, or deployment risks; write “None” if none. -->
+<!-- Compatibility, security, or deployment risks. Write "None" if there are none -->

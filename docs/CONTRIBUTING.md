@@ -1,8 +1,8 @@
 # Contributing
 
-Install Rust 1.85 or newer. Keep changes focused and add a compact table-driven test when behaviour changes.
+Use Rust 1.85 or newer. Keep changes focused. When behaviour changes, add one compact table-driven test.
 
-Run the local release gate:
+Before opening a pull request, run:
 
 ```sh
 cargo fmt --check
@@ -11,10 +11,10 @@ cargo test --all-targets --no-fail-fast --locked
 cargo build --release --locked
 ```
 
-Use `cargo fmt` to apply formatting. For a focused check, select the module or test name, for example `cargo test quality::tests`.
+Run `cargo fmt` to apply formatting. For a quick loop, target the relevant module or test, such as `cargo test quality::tests`.
 
-Workflow changes should also pass `actionlint .github/workflows/*.yml` when `actionlint` is installed. Reviews use trusted self-hosted runners with an authenticated native harness. Public repositories must pass the GitHub-hosted Dependabot preflight and may use only the bounded Codex or Claude harness. Never add subscription credentials or model API keys to public workflows.
+If you change a workflow, run `actionlint .github/workflows/*.yml` when it is installed. Never put subscription credentials or model API keys in public workflows; read [Security](SECURITY.md) before changing runner or credential boundaries.
 
-Use Conventional Commit pull-request titles. `fix:` produces a patch release, `feat:` a minor release, and `!` or `BREAKING CHANGE:` a major release. Release Please updates `Cargo.toml` and [CHANGELOG.md](CHANGELOG.md), then creates the tag and release after its release pull request is merged.
+Use Conventional Commit titles: `fix:` makes a patch release, `feat:` a minor release, and `!` or `BREAKING CHANGE:` a major release. Release Please updates `Cargo.toml` and the changelog, then creates the tag and release once its release PR merges.
 
-Contributions are accepted under the [MIT License](../LICENSE).
+Contributions are under the [MIT License](../LICENSE).
