@@ -44,9 +44,22 @@ jobs:
           fi
       - name: Prepare release PR or publish merged release
         if: steps.baseline.outputs.ready == 'true'
+        id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}
           target-branch: main
           config-file: tools/config/release-please.json
           manifest-file: tools/config/release-manifest.json
+      - name: Check out the released source
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.release.outputs.tag_name }}
+          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
+      - name: Publish the released crate
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked

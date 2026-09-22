@@ -11,56 +11,44 @@
   <img src="docs/assets/rady-poster.webp" alt="Rady duck at a terminal beside the words: Make the change. Check the work. Rady keeps the patch, tests, and review together." width="100%">
 </p>
 
-Rady is a Rust CLI for making checked code changes and reviewing dependency pull requests. You review the evidence and keep the final decision.
+Rady is a Rust CLI for checked changes, dependency reviews, and useful GitHub answers. It keeps the evidence close; you keep the final call.
 
-- `rady code` turns a request into an isolated, checked change
-- `rady dependasolve` reviews Dependabot pull requests from their diff and completed CI evidence
+- `rady code` makes an isolated, checked change
+- `rady dependasolve` reviews Dependabot work from its diff and completed CI
+- `@radyybot` gives a short, natural answer grounded in the issue or pull request
 
-By default, Rady prints concise terminal output and keeps a self-contained HTML report with safe Markdown, local mathematics, responsive type, themes, and a duck illustration. Automation can use `--output json`.
+Terminal output is concise. Each run keeps a self-contained HTML report with safe Markdown, local maths, themes, and selectable text. Automation can use `--output json`.
 
 ## Install
-
-Install Rady on macOS or Linux from the project tap:
 
 ```sh
 brew tap keys-i/rady https://github.com/keys-i/rady
 brew install keys-i/rady/rady
 ```
 
-Or install the tagged source with Cargo:
+After it is published, install the current crate with:
 
 ```sh
-cargo install --git https://github.com/keys-i/rady --tag v0.5.5 --locked rady
+cargo install rady --version 0.5.6 --locked
 ```
 
-Rady needs Rust 1.85+ to build from source. Coding runs need an authenticated [Codex CLI](https://developers.openai.com/codex/cli/) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code); GitHub setup and pull-request review need the GitHub CLI.
+Build a checkout with Rust 1.85+:
 
 ```sh
 cargo build --release --locked
 target/release/rady --help
 ```
 
-`dependasolver` remains a compatibility command for `rady dependasolve`.
+Code runs need an authenticated [Codex CLI](https://developers.openai.com/codex/cli/) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code). GitHub setup needs `gh`. `dependasolver` remains a compatibility command for `rady dependasolve`.
 
 ## Make a checked change
 
-For a simple change:
-
 ```sh
 rady code "Reject blank user names"
-```
-
-Rady works in isolation, limits scope, runs the selected checks, and gets a separate read-only review. The workspace and evidence survive a stopped run. Publishing a pull request requires `--pr`, an explicit repository, and fixed acceptance checks.
-
-For repeatable work, pass a JSON specification:
-
-```sh
 rady code --spec spec.json --directory /path/to/project
 ```
 
-Acceptance files must already exist and remain unchanged. Rady parses commands into arguments rather than running a shell. Use `--help` for every option.
-
-Inspect, stop, resume, or apply a retained run:
+Rady isolates the work, limits scope, runs your checks, and gets a separate read-only review. A stopped run keeps its workspace and evidence. `--pr` also needs an explicit repository and fixed acceptance checks.
 
 ```sh
 rady runs
@@ -70,37 +58,37 @@ rady resume RUN_ID
 rady apply RUN_ID --directory /path/to/project
 ```
 
-`apply` verifies the patch and target revision. It never stages, commits, or publishes your work.
+`apply` verifies the patch and target revision; it does not stage, commit, or publish.
 
-## Review dependency pull requests
+## Add radyybot to a `keys-i` repository
 
-Preview setup, then apply it when it looks right:
+Install the **radyybot** GitHub App for the repository, read the [Terms](docs/TERMS.md) and [Privacy policy](docs/PRIVACY.md), then preview and accept:
 
 ```sh
-rady dependasolve --repo OWNER/REPO --check test --check audit
-rady dependasolve --repo OWNER/REPO --check test --check audit --apply
+rady dependasolve --repo keys-i/REPO --check test
+rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
 ```
 
-Setup pins Rady to an immutable commit and replaces only its generated caller files. Existing Dependabot settings and branch protection stay untouched. `--check` names CI evidence to read; it does not run a command or add a required status check.
+This writes `.github/rady.json` with the selected checks and versioned agreement (and adds Dependabot configuration only when it is missing). It does not copy an App key or model key into the target repository. Rady’s central workflow in `keys-i/rady` holds the credentials and scans installed, consented `keys-i` repositories on a five-minute schedule; a reply or review can therefore take five minutes or more.
 
-Dependasolve reviews eligible pull requests oldest first. Passing low-risk updates may be approved; missing evidence holds them. Eligible conflicted Dependabot updates can become separate, reviewed replacement pull requests. Rady never force-pushes, closes the original, or merges for you.
+For another owner, or for real-time responses, run a hosted backend with its own secure secret store. GitHub Actions secrets in `keys-i/rady` cannot securely or instantly serve arbitrary owners.
 
-Private repositories use a trusted self-hosted runner. Public repositories admit only trusted same-repository Dependabot or collaborator pull requests after preflight. See [Security](docs/SECURITY.md) for the full boundary.
+`--check` names CI evidence to read. It neither runs a command nor creates a required status check. Dependasolve processes eligible work oldest first, may prepare a separate replacement PR for a safe conflicted update, and never force-pushes, closes the original, or merges for you.
 
-## Ask Rady on GitHub
-
-Repository owners, members, and collaborators can ask a read-only question on an issue or pull request:
+## Ask on GitHub
 
 ```text
 @radyybot What changed here, and what should I check?
 ```
 
-`@radyybot` alone shows concise usage. Mentions cannot edit code or publish changes. Read [Upgrading](docs/UPGRADING.md) for configuration and [Security](docs/SECURITY.md) before sending repository content to a model provider.
+Owners, members, and collaborators can use mentions on issues and pull requests. Replies are read-only, concise, and specific to the available evidence; a bare `@radyybot` shows usage. They cannot edit code or publish a change.
 
-## Trust, output, and themes
+GitHub-hosted replies select compatible Gemini and Cerebras models exposed to the configured accounts, then use fallbacks. The catalogs describe accessible models, not a promise of a free tier or unlimited quota; Rady does not evade provider limits. Private repository evidence is sent only to providers explicitly opted in by the central operator.
 
-Rady keeps generated work distinct from verified work, bounds subprocess time and output, removes common model and GitHub tokens from workers, and fails closed when evidence is missing. Custom adapters are privileged local programs, not sandboxes.
+## Safety
 
-Reports contain no scripts, CDN, remote fonts, or raw untrusted HTML. Markdown and mathematics remain selectable text. `--theme auto` follows the environment; `NO_COLOR`, redirected output, keyboard focus, and reduced motion remain first-class.
+Rady separates generated from verified work, bounds subprocesses and evidence, removes common tokens from worker environments, and fails closed when evidence is missing. Custom adapters are privileged local programs, not sandboxes.
 
-[Upgrading](docs/UPGRADING.md) · [Releasing](docs/RELEASING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)
+Reports use no scripts, CDNs, remote fonts, or raw untrusted HTML. `--theme auto`, `NO_COLOR`, redirected output, keyboard focus, and reduced motion are all supported.
+
+[Upgrading](docs/UPGRADING.md) · [Releasing](docs/RELEASING.md) · [Security](docs/SECURITY.md) · [Terms](docs/TERMS.md) · [Privacy](docs/PRIVACY.md) · [MIT](LICENSE)
