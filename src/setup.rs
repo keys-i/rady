@@ -788,8 +788,68 @@ mod tests {
         assert!(workflow.contains("check_run:"));
         assert!(workflow.contains("workflow_run:"));
         assert!(workflow.contains("issue_comment:"));
-        assert!(workflow.contains(r#"^@radyybot($|[[:space:]])"#));
-        assert!(!workflow.contains(r#"^@rady($|[[:space:]])"#));
+        let selector = workflow
+            .split_once("\n  select:\n")
+            .and_then(|(_, rest)| rest.split_once("\n  review-current:\n"))
+            .map(|(selector, _)| selector)
+            .expect("generated selector job");
+        for event in ["push", "schedule", "workflow_dispatch"] {
+            assert!(
+                selector.contains(&format!("github.event_name == '{event}'")),
+                "{event} must retain backlog selection"
+            );
+        }
+        for event in [
+            "pull_request_target",
+            "workflow_run",
+            "check_run",
+            "issue_comment",
+        ] {
+            assert!(
+                !selector.contains(&format!("github.event_name == '{event}'")),
+                "{event} must bypass backlog selection"
+            );
+        }
+        assert!(
+            selector
+                .contains("if [[ -n \"$PR_NUMBER\" ]]; then one \"$PR_NUMBER\"; else backlog; fi")
+        );
+        assert!(selector.contains("push|schedule) backlog"));
+        assert!(selector.contains(
+            "group: rady-selection-${{ github.repository }}-${{ inputs.pr-number || 'backlog' }}"
+        ));
+        assert!(selector.contains("cancel-in-progress: true"));
+        let direct_review = workflow
+            .split_once("\n  review-current:\n")
+            .and_then(|(_, rest)| rest.split_once("\n  review:\n"))
+            .map(|(review, _)| review)
+            .expect("generated direct review job");
+        assert!(!direct_review.contains("needs: select"));
+        for event in ["pull_request_target", "workflow_run", "check_run"] {
+            assert!(direct_review.contains(&format!("github.event_name == '{event}'")));
+        }
+        for predicate in [
+            "github.event.action != 'closed'",
+            "!github.event.pull_request.draft",
+            "github.event.workflow_run.status == 'completed'",
+            "github.event.workflow_run.pull_requests[0].number > 0",
+            "!startsWith(github.event.workflow_run.name, 'Rady dependasolve')",
+            "github.event.check_run.status == 'completed'",
+            "github.event.check_run.pull_requests[0].number > 0",
+            "!startsWith(github.event.check_run.name, 'Rady dependasolve gate')",
+            "!startsWith(github.event.check_run.name, 'Rady dependasolve /')",
+        ] {
+            assert!(direct_review.contains(predicate), "missing {predicate}");
+        }
+        assert!(direct_review.contains("pr-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}"));
+        assert!(direct_review.contains("required-checks: '[\"check\"]'"));
+        assert!(direct_review.contains(&format!(
+            "uses: keys-i/rady/.github/workflows/solve.yml@{}",
+            "a".repeat(40)
+        )));
+        assert!(workflow.contains("github.event.comment.body == '@radyybot'"));
+        assert!(workflow.contains("startsWith(github.event.comment.body, '@radyybot ')"));
+        assert!(!workflow.contains("startsWith(github.event.comment.body, '@rady ')"));
         assert!(workflow.contains("schedule:"));
         assert!(workflow.contains("max-parallel: 1"));
         assert!(workflow.contains("PRIVATE_REPOSITORY: ${{ github.event.repository.private }}"));
@@ -810,11 +870,17 @@ mod tests {
             .rsplit_once("\n  respond:\n")
             .map(|(_, responder)| responder)
             .expect("generated responder job");
+        assert!(!responder.contains("needs: select"));
+        assert!(responder.contains("github.event.comment.author_association == 'OWNER'"));
+        assert!(responder.contains("issue-number: ${{ github.event.issue.number }}"));
+        assert!(responder.contains("comment-id: ${{ github.event.comment.id }}"));
         assert!(responder.contains("cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}"));
         assert!(responder.contains("gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}"));
+        assert!(responder.contains("xai-api-key: ${{ secrets.RADY_XAI_API_KEY }}"));
         assert!(
             responder.contains("gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}")
         );
+        assert!(responder.contains("xai-private-ok: ${{ vars.RADY_XAI_PRIVATE_OK == 'true' }}"));
         assert!(!responder.contains("model: ${{ vars.RADY_MODEL"));
         assert!(!responder.contains("harness: ${{ vars.RADY_HARNESS"));
         assert!(!workflow.contains("RADY_APP_CLIENT_ID ||"));
