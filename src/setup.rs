@@ -374,8 +374,8 @@ pub fn install(
     };
     let existing = existing_app(TRUSTED_SOLVER_REPOSITORY, effective_identity)?
         .ok_or_else(|| anyhow!("central App credentials disappeared during setup"))?;
-    verify_existing_app(existing.clone())?;
-    ensure_installation(repo, &existing.slug)?;
+    verify_existing_app(existing)?;
+    // GitHub reserves installation lookup for App JWTs; central token creation verifies access
     let agreement = agreement(repo)?;
     let files = setup_files(directory, source, required, overwrite, Some(&agreement))?;
     for (path, content) in files {
@@ -550,7 +550,6 @@ fn receipt_matches(
     }) && permission.is_some_and(|value| value["permission"].as_str() == Some("admin"))
 }
 
-#[derive(Clone)]
 struct ExistingApp {
     identity: Identity,
     client_id: String,
@@ -619,29 +618,6 @@ fn verify_existing_app(existing: ExistingApp) -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn ensure_installation(repo: &str, slug: &str) -> Result<()> {
-    if installation_matches(repo, slug)? {
-        return Ok(());
-    }
-    apps::open_installation(slug, repo)?;
-    eprintln!("Press Enter after granting radyybot access to {repo}");
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line)?;
-    if !installation_matches(repo, slug)? {
-        bail!("radyybot is not installed for {repo}");
-    }
-    Ok(())
-}
-
-fn installation_matches(repo: &str, slug: &str) -> Result<bool> {
-    let installation = github::api(&format!("repos/{repo}/installation"), None, "GET", true)?;
-    Ok(installation.is_some_and(|installation| {
-        installation["app_slug"]
-            .as_str()
-            .is_some_and(|value| value.eq_ignore_ascii_case(slug))
-    }))
 }
 
 #[allow(clippy::too_many_arguments)]

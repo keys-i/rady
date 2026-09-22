@@ -1,0 +1,15 @@
+{
+  "agreement": {
+    "accepted_at_unix": 1790119672,
+    "accepted_by": "keys-i",
+    "comment": 5786052080,
+    "issue": 15,
+    "privacy": "2026-09-23",
+    "terms": "2026-09-23"
+  },
+  "checks": [
+    "test"
+  ],
+  "schema": 1,
+  "source": "keys-i/rady@f397630704f8e2cb22cb461d6a7e21b88ff80842"
+}

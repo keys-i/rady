@@ -639,7 +639,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             arguments.checks.join(", "),
             files,
             if arguments.apply {
-                "radyybot is installed, consent is recorded, and central orchestration will pick up mentions and pending pull requests."
+                "Consent is recorded. Central orchestration will verify radyybot access before picking up mentions and pending pull requests."
             } else {
                 "Read `docs/TERMS.md` and `docs/PRIVACY.md`, then run again with `--apply --accept-terms` if you agree."
             }
