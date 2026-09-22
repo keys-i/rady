@@ -1,46 +1,55 @@
-# Upgrading to the Rust Rady CLI
+# Upgrading to Rady 0.5.6
 
-Rady is now a native Rust executable. Python, virtual environments, `pip`, `uv`, root Python launchers, and the Python package are gone.
-
-Build from a checkout:
+Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
 ```sh
 cargo build --release --locked
 target/release/rady --help
 ```
 
-Replace `.venv/bin/rady` with the installed `rady` binary. Replace the legacy setup command with `rady dependasolve`; the `dependasolver` binary remains for compatibility.
+Replace `.venv/bin/rady` with `rady`. `dependasolver` remains a compatibility name for `rady dependasolve`.
 
-## What stays compatible
+## What remains compatible
 
-JSON specifications, evidence semantics, harness environment variables, and GitHub App credentials continue to work. Human output is now the default. Successful `code` and `dependasolve` output keeps the shared `{"schema":1,"status":"ok","kind":"…","result":…}` envelope, so automation should read below `result` and request `--output json` when consuming stdout. Use `--theme dawn|moss|tide|dusk`, or leave `auto` to follow the display profile.
+JSON specifications, retained evidence, harness environment variables, and `--output json` remain supported. Human output is now the default. Successful `code` and `dependasolve` commands retain the `{"schema":1,"status":"ok","kind":"…","result":…}` envelope.
 
-Code runs retain `run.json` plus a self-contained `run.html`; the report renders safe Markdown and LaTeX locally without network requests.
+`rady code` keeps `run.json` and a self-contained `run.html`; Markdown and LaTeX render locally. Use `--theme dawn|moss|tide|dusk`, or leave `auto` enabled.
 
-## Solver and harnesses
+## Central GitHub setup
 
-Setup resolves `keys-i/rady`'s current default-branch commit and pins its immutable 40-character SHA in the reusable workflow. Supply `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to deliberately override it. Other source repositories are rejected before checkout because execution happens on the trusted self-hosted runner.
+Rady 0.5.6 uses the public **radyybot** App and one central Actions installation in `keys-i/rady`. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys live there only. They must not be added to target repositories.
 
-Rady uses an authenticated Codex or Claude Code CLI, or an operator-owned command adapter. It does not require `OPENAI_API_KEY`. `RADY_MODEL_CHOICES` lists models from least to most capable; `RADY_MODEL` pins one. Broad code work becomes at most eight serial tasks, with escalation only after failed evidence. The public/private runner boundary is unchanged and documented in [Security](SECURITY.md).
+For a `keys-i` repository, install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then run:
 
-Only owners, members, and collaborators can use `@radyybot <prompt>` in an issue or pull request. It returns read-only evidence; bare `@radyybot` shows usage and never edits code.
+```sh
+rady dependasolve --repo keys-i/REPO --check test
+rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
+```
 
-## Hosted mention replies
+Setup creates a closed, admin-authored consent receipt and records its IDs, the checked CI names, and policy versions in `.github/rady.json`. Central processing revalidates the receipt and current admin access. Setup creates Dependabot configuration only if none exists and does not alter branch protection. Re-run with `--no-overwrite` when you want setup to refuse an existing generated configuration.
 
-On your machine, Rady prefers authenticated Codex. GitHub-hosted replies use a Gemini-first route. Add `RADY_GEMINI_API_KEY` as a repository- or organisation-scoped Actions secret; `RADY_CEREBRAS_API_KEY` and `RADY_XAI_API_KEY` add optional fallbacks. Private and unknown repositories use Gemini or Grok only when `RADY_GEMINI_PRIVATE_OK=true` or `RADY_XAI_PRIVATE_OK=true` opts in. This configuration affects read-only mentions, not native code, Dependasolve, or repair harnesses. [Security](SECURITY.md) records the provider order and data-handling limits.
+Central Actions checks consented installed repositories every five minutes. That is the secure GitHub-only arrangement for `keys-i` repositories, not instant delivery. A repository owned by someone else, or a real-time service, needs a hosted backend with a dedicated secret manager and verified GitHub webhooks; a reusable workflow cannot read secrets from `keys-i/rady` on behalf of another repository.
 
-## GitHub App and dependency reviews
+`--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` is only for deliberately pinning an older trusted source. Omit it to use the current `keys-i/rady` commit.
 
-Rady uses one **Rady** App for Dependabot reviews, guarded mentions, and low-risk replacement PRs. Grant Administration, Checks, and Commit statuses read access plus Contents, Issues, and Pull requests write access. Existing installations must accept the added Contents and Issues write permissions. Do not grant branch-protection bypass.
+## Mentions and providers
 
-| App | Actions variables | Actions secret |
+Only an `OWNER`, `MEMBER`, or `COLLABORATOR` may use `@radyybot <prompt>`. It returns a concise, evidence-based answer; it cannot modify code, create a PR, or merge work.
+
+GitHub-hosted mentions prefer compatible Gemini and Cerebras models available to the central credentials. Rady inventories those provider catalogs at runtime and falls back after an unavailable model or quota response. Accessibility in a catalog is not a free-tier guarantee, and Rady never evades quotas or provider terms.
+
+Public repository evidence may use configured providers. Private or unknown repositories need a separate central opt-in for each provider:
+
+| Provider | Central Actions secret | Private-repository variable |
 | --- | --- | --- |
-| Rady | `RADY_APP_CLIENT_ID`, `RADY_APP_SLUG` | `RADY_APP_PRIVATE_KEY` |
-| Hosted mention opt-in | `RADY_GEMINI_PRIVATE_OK=true`, `RADY_XAI_PRIVATE_OK=true` | `RADY_GEMINI_API_KEY`; optional `RADY_CEREBRAS_API_KEY`, `RADY_XAI_API_KEY` |
-| Legacy Dependasolver fallback | `DEPENDASOLVER_APP_CLIENT_ID`, `DEPENDASOLVER_APP_SLUG` | `DEPENDASOLVER_APP_PRIVATE_KEY` |
+| Gemini | `RADY_GEMINI_API_KEY` | `RADY_GEMINI_PRIVATE_OK=true` |
+| Cerebras | `RADY_CEREBRAS_API_KEY` | `RADY_CEREBRAS_PRIVATE_OK=true` |
+| xAI (optional) | `RADY_XAI_API_KEY` | `RADY_XAI_PRIVATE_OK=true` |
 
-A complete legacy credential set is used only when every Rady credential is absent; `--app dependasolver` explicitly selects it. Run `rady dependasolve` as a preview, then repeat with `--apply`. It defaults to Rady and reuses a complete verified `RADY_APP_*` set; `--new-app` forces registration. `--check` selects CI evidence to read; `--checks` remains an alias. Setup never changes branch protection.
+These values belong in `keys-i/rady`, not a target repository. See [Security](SECURITY.md) before enabling a provider for private content.
 
-Rady enables Dependabot auto-merge only when existing protection is strict, administrator-enforced, and requires at least one check. Otherwise it leaves the decision for a maintainer. Scheduled and manual runs visit eligible PRs oldest-first: every non-draft private PR, or trusted public same-repository Dependabot, owner, member, and collaborator PRs. Eligible conflicted Dependabot updates become replacement PRs from the current base; Rady never changes the Dependabot branch.
+## Dependency reviews
 
-When upgrading `keys-i/rady`, merge reusable `solve.yml` and `respond.yml` before regenerating its caller workflow. Then run setup from that published revision so `.github/workflows/dependasolver.yml` pins a commit containing both workflows.
+Rady reads selected CI evidence; `--check` (and its `--checks` alias) does not run a shell command or make GitHub require a check. Eligible work is processed oldest first. The central service can enable protected auto-merge for a clean, verified update. Conflicted updates remain for local `rady code` repair so long-lived central keys never enter a self-hosted runner.
+
+Native code and repair runs use an authenticated Codex or Claude Code CLI, or an operator-owned adapter. `RADY_MODEL_CHOICES` orders native models from least to most capable and `RADY_MODEL` pins one. Hosted providers answer mentions and perform central read-only review; they do not replace the local code or repair harness.

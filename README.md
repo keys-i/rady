@@ -69,11 +69,11 @@ rady dependasolve --repo keys-i/REPO --check test
 rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
 ```
 
-This writes `.github/rady.json` with the selected checks and versioned agreement (and adds Dependabot configuration only when it is missing). It does not copy an App key or model key into the target repository. Rady’s central workflow in `keys-i/rady` holds the credentials and scans installed, consented `keys-i` repositories on a five-minute schedule; a reply or review can therefore take five minutes or more.
+This creates a closed, admin-authored consent receipt and writes its IDs, the policy versions, and selected checks to `.github/rady.json` (and adds Dependabot configuration only when it is missing). Central processing revalidates that receipt and the signer’s current admin access. It does not copy an App key or model key into the target repository. Rady’s central workflow in `keys-i/rady` holds the credentials and scans installed, consented `keys-i` repositories on a five-minute schedule; a reply or review can therefore take five minutes or more.
 
 For another owner, or for real-time responses, run a hosted backend with its own secure secret store. GitHub Actions secrets in `keys-i/rady` cannot securely or instantly serve arbitrary owners.
 
-`--check` names CI evidence to read. It neither runs a command nor creates a required status check. Dependasolve processes eligible work oldest first, may prepare a separate replacement PR for a safe conflicted update, and never force-pushes, closes the original, or merges for you.
+`--check` names CI evidence to read. It neither runs a command nor creates a required status check. Dependasolve processes eligible work oldest first and can enable protected auto-merge for a clean, verified update. Conflicted updates remain for local `rady code` repair; the central service never sends its long-lived keys to a self-hosted runner.
 
 ## Ask on GitHub
 

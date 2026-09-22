@@ -1516,7 +1516,7 @@ fn changed_files(
 }
 
 const MAX_CREDENTIAL_SCAN_BYTES: usize = 1_000_000;
-const CREDENTIAL_PATTERN: &str = r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----|(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{20,255}|(?:AKIA|ASIA)[0-9A-Z]{16}|sk-(?:ant-[A-Za-z0-9_-]{20,255}|proj-[A-Za-z0-9_-]{20,255}|[A-Za-z0-9_-]{32,255}))";
+const CREDENTIAL_PATTERN: &str = r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----|(?:github_pat_[A-Za-z0-9_]{20,255}|gh[pousr]_[A-Za-z0-9]{20,255}|(?:AKIA|ASIA)[0-9A-Z]{16}|(?:AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_-]{20,255}|csk-[A-Za-z0-9_-]{20,255}|xai-[A-Za-z0-9_-]{20,255})|sk-(?:ant-[A-Za-z0-9_-]{20,255}|proj-[A-Za-z0-9_-]{20,255}|[A-Za-z0-9_-]{32,255}))";
 
 fn scan_credentials(directory: &Path, path: &Path, name: &str, credential: &Regex) -> Result<()> {
     let Some(file) = open_scannable_file(directory, path, name)? else {
@@ -2449,6 +2449,14 @@ mod tests {
                 true,
             ),
             ("temporary-key.txt", "ASIAAAAAAAAAAAAAAAAA", true),
+            (
+                "gemini-legacy.txt",
+                "AIzaAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                true,
+            ),
+            ("gemini-current.txt", "AQ.AAAAAAAAAAAAAAAAAAAA", true),
+            ("cerebras.txt", "csk-AAAAAAAAAAAAAAAAAAAA", true),
+            ("xai.txt", "xai-AAAAAAAAAAAAAAAAAAAA", true),
         ] {
             let path = temporary.path().join(name);
             fs::write(&path, content)?;

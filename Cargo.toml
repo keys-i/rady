@@ -13,7 +13,6 @@ publish = ["crates-io"]
 include = [
     "/.github/workflows/solve.yml",
     "/.github/workflows/scripts/fetch-pr-state.sh",
-    "/.github/workflows/scripts/prepare-repair-spec.sh",
     "/.github/workflows/scripts/select-central-targets.sh",
     "/.github/workflows/scripts/validate-pr-trust.sh",
     "/docs/*.md",

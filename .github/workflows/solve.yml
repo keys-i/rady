@@ -10,6 +10,19 @@ on:
       app-client-id:
         required: true
         type: string
+      repo:
+        description: Installed target repository in OWNER/REPO form
+        required: true
+        type: string
+      repo-owner:
+        required: true
+        type: string
+      repo-name:
+        required: true
+        type: string
+      repository-private:
+        required: true
+        type: boolean
       required-checks:
         description: JSON array of required CI check names
         required: true
@@ -31,27 +44,22 @@ on:
     secrets:
       app-private-key:
         required: true
+      gemini-api-key:
+        required: false
+      cerebras-api-key:
+        required: false
+      xai-api-key:
+        required: false
 
 permissions: {}
 
 concurrency:
-  group: rady-${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
+  group: rady-${{ inputs.repo }}-${{ inputs.pr-number }}
   cancel-in-progress: true
 
 jobs:
   preflight:
-    if: >-
-      ((github.event_name == 'pull_request_target' && github.event.action != 'closed' && !github.event.pull_request.draft) ||
-      (inputs.pr-number > 0) ||
-      (github.event_name == 'workflow_run' &&
-      github.event.workflow_run.status == 'completed' &&
-      github.event.workflow_run.pull_requests[0].number > 0 &&
-      !startsWith(github.event.workflow_run.name, 'Rady dependasolve')) ||
-      (github.event_name == 'check_run' &&
-      github.event.check_run.status == 'completed' &&
-      github.event.check_run.pull_requests[0].number > 0 &&
-      !startsWith(github.event.check_run.name, 'Rady dependasolve gate') &&
-      !startsWith(github.event.check_run.name, 'Rady dependasolve /')))
+    if: inputs.pr-number > 0
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -63,6 +71,16 @@ jobs:
       head: ${{ steps.pull.outputs.head }}
       number: ${{ steps.pull.outputs.number }}
     steps:
+      - name: Create read-only target App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ inputs.repo-owner }}
+          repositories: ${{ inputs.repo-name }}
+          permission-contents: read
+          permission-pull-requests: read
       - name: Validate trusted solver source
         id: source
         shell: bash
@@ -87,23 +105,37 @@ jobs:
         id: pull
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ inputs.repo }}
+          PRIVATE_REPOSITORY: ${{ inputs.repository-private }}
+          PR_NUMBER: ${{ inputs.pr-number }}
         run: bash rady-workflow-scripts/.github/workflows/scripts/validate-pr-trust.sh
 
   review:
     needs: preflight
     if: needs.preflight.outputs.allowed == 'true'
-    runs-on: self-hosted
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       pull-requests: write
     steps:
+      - name: Create repository-scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ inputs.app-client-id }}
+          private-key: ${{ secrets.app-private-key }}
+          owner: ${{ inputs.repo-owner }}
+          repositories: ${{ inputs.repo-name }}
+          permission-administration: read
+          permission-contents: write
+          permission-checks: read
+          permission-statuses: read
+          permission-issues: write
+          permission-pull-requests: write
       - name: Require a native public review harness
-        if: github.event.repository.private != true
+        if: inputs.repository-private != true
         shell: bash
         env:
           RADY_HARNESS: ${{ inputs.harness }}
@@ -116,8 +148,8 @@ jobs:
       - name: Suspend stale Dependabot auto-merge
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
         run: |
           set -euo pipefail
@@ -178,50 +210,27 @@ jobs:
           key: rady-${{ runner.os }}-${{ steps.toolchain.outputs.version }}-${{ steps.source.outputs.sha }}-${{ hashFiles('Cargo.lock') }}
       - name: Build the trusted solver
         run: cargo build --release --locked --bin rady
-      - name: Verify the authenticated agent harness
-        env:
-          RADY_HARNESS: ${{ inputs.harness }}
-        run: target/release/rady agent doctor --harness "$RADY_HARNESS"
       - name: Resolve PR author and commit
         id: pr
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
         run: target/release/rady agent resolve --repo "$GH_REPO" --pr "$PR_NUMBER"
-      - name: Require the selected App credentials
+      - name: Recheck pull request identity
         shell: bash
         env:
           DEPENDENCY: ${{ steps.pr.outputs.dependency }}
           EXPECTED_DEPENDENCY: ${{ needs.preflight.outputs.dependency }}
           EXPECTED_HEAD: ${{ needs.preflight.outputs.head }}
           HEAD: ${{ steps.pr.outputs.head }}
-          APP_ID: ${{ inputs.app-client-id }}
-          APP_KEY: ${{ secrets.app-private-key }}
         run: |
           set -euo pipefail
           if [[ "$DEPENDENCY" != "$EXPECTED_DEPENDENCY" || "$HEAD" != "$EXPECTED_HEAD" ]]; then
             echo 'The pull request changed after preflight; rerun on the current state' >&2
             exit 1
           fi
-          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
-            echo 'Configure the selected Rady App client ID and private key' >&2
-            exit 1
-          fi
-      - name: Create repository-scoped GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ inputs.app-client-id }}
-          private-key: ${{ secrets.app-private-key }}
-          repositories: ${{ github.event.repository.name }}
-          permission-administration: read
-          permission-contents: write
-          permission-checks: read
-          permission-statuses: read
-          permission-issues: write
-          permission-pull-requests: write
       # == Canonical pull request evidence ==
       # Load fresh API state without checking out or running PR-controlled code
       - name: Fetch current pull request state
@@ -229,7 +238,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           EXPECTED_HEAD: ${{ steps.pr.outputs.head }}
         run: bash .github/workflows/scripts/fetch-pr-state.sh
@@ -252,7 +261,14 @@ jobs:
           RADY_MODEL: ${{ inputs.model }}
           RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
           RADY_HARNESS: ${{ inputs.harness }}
-          GH_REPO: ${{ github.repository }}
+          RADY_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
+          RADY_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
+          RADY_XAI_API_KEY: ${{ secrets.xai-api-key }}
+          RADY_REPOSITORY_PRIVATE: ${{ inputs.repository-private }}
+          RADY_GEMINI_PRIVATE_OK: ${{ vars.RADY_GEMINI_PRIVATE_OK || 'false' }}
+          RADY_CEREBRAS_PRIVATE_OK: ${{ vars.RADY_CEREBRAS_PRIVATE_OK || 'false' }}
+          RADY_XAI_PRIVATE_OK: ${{ vars.RADY_XAI_PRIVATE_OK || 'false' }}
+          GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           REQUIRED_CHECKS: ${{ inputs.required-checks }}
           EXPECTED_HEAD: ${{ steps.pr-state.outputs.head }}
@@ -260,88 +276,6 @@ jobs:
           UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
           MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
         run: target/release/rady agent review --repo "$GH_REPO" --pr "$PR_NUMBER"
-      - name: Prepare a safe replacement for a conflicted Dependabot update
-        id: repair-spec
-        if: >-
-          steps.review.outputs.approved == 'true' &&
-          steps.pr.outputs.dependency == 'true' &&
-          fromJSON(steps.metadata.outputs.compatibility-score || '0') >= 95 &&
-          fromJSON(steps.metadata.outputs.compatibility-score || '0') <= 100 &&
-          contains(fromJSON('["version-update:semver-patch","version-update:semver-minor"]'), steps.metadata.outputs.update-type) &&
-          steps.metadata.outputs.maintainer-changes == 'false' &&
-          steps.pr-state.outputs.mergeable == 'false' &&
-          steps.pr-state.outputs.mergeable_state == 'dirty'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ needs.preflight.outputs.number }}
-          EXPECTED_HEAD: ${{ steps.pr-state.outputs.head }}
-          EXPECTED_BASE: ${{ steps.pr-state.outputs.base_sha }}
-          SCORE: ${{ steps.metadata.outputs.compatibility-score }}
-          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
-          MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
-          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
-          PREVIOUS_VERSION: ${{ steps.metadata.outputs.previous-version }}
-          NEW_VERSION: ${{ steps.metadata.outputs.new-version }}
-          SPEC: ${{ runner.temp }}/rady-repair-spec.json
-        run: bash .github/workflows/scripts/prepare-repair-spec.sh
-      - name: Check out the verified current base for replacement
-        if: steps.repair-spec.outputs.spec != ''
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ steps.pr-state.outputs.base_sha }}
-          token: ${{ steps.app-token.outputs.token }}
-          path: rady-repair-target
-          persist-credentials: false
-      - name: Open replacement pull request
-        id: replacement
-        if: steps.repair-spec.outputs.spec != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          RADY_PUSH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          BASE_BRANCH: ${{ steps.pr-state.outputs.base }}
-          BASE_SHA: ${{ steps.pr-state.outputs.base_sha }}
-          SPEC: ${{ steps.repair-spec.outputs.spec }}
-          RADY_MODEL: ${{ inputs.model }}
-          RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
-          RADY_HARNESS: ${{ inputs.harness }}
-          RESULT: ${{ runner.temp }}/rady-replacement.json
-        run: |
-          set -euo pipefail
-          [[ "$GH_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || {
-            echo 'invalid repository name' >&2
-            exit 1
-          }
-          command=(target/release/rady --output json code --spec "$SPEC" --directory rady-repair-target --pr --repo "$GH_REPO" --base "$BASE_BRANCH" --expected-start "$BASE_SHA" --timeout 1800 --max-lines 1000)
-          "${command[@]}" > "$RESULT"
-          replacement_url=$(jq -er '.schema == 1 and .status == "ok" and .kind == "code" and (.result.url | type == "string") | .result.url' "$RESULT")
-          expected="https://github.com/$GH_REPO/pull/"
-          [[ "$replacement_url" == "$expected"* ]] || {
-            echo 'Rady returned an unexpected replacement pull request URL' >&2
-            exit 1
-          }
-          number=${replacement_url#"$expected"}
-          [[ "$number" =~ ^[1-9][0-9]*$ ]] || {
-            echo 'Rady returned an invalid replacement pull request URL' >&2
-            exit 1
-          }
-          echo "url=$replacement_url" >> "$GITHUB_OUTPUT"
-      - name: Link the original Dependabot update to its replacement
-        if: steps.replacement.outputs.url != ''
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
-          PR_NUMBER: ${{ needs.preflight.outputs.number }}
-          REPLACEMENT_URL: ${{ steps.replacement.outputs.url }}
-        run: |
-          set -euo pipefail
-          body=$(jq -n --arg url "$REPLACEMENT_URL" '{body: "Superseded by replacement " + $url}')
-          gh api --method POST "repos/$GH_REPO/issues/$PR_NUMBER/comments" --input - <<<"$body" > /dev/null
       - name: Require protected branch and enable auto-merge
         if: >-
           steps.review.outputs.enable_auto_merge == 'true' &&
@@ -354,7 +288,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ github.repository }}
+          GH_REPO: ${{ inputs.repo }}
           PR_URL: ${{ steps.pr-state.outputs.url }}
           HEAD_SHA: ${{ steps.pr-state.outputs.head }}
           BASE_BRANCH: ${{ steps.pr-state.outputs.base }}

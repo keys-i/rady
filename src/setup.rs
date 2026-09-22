@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
@@ -12,6 +13,11 @@ use crate::apps::{self, Identity};
 use crate::github;
 
 const TRUSTED_SOLVER_REPOSITORY: &str = "keys-i/rady";
+const TERMS_VERSION: &str = "2026-09-23";
+const PRIVACY_VERSION: &str = "2026-09-23";
+const TERMS_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/TERMS.md";
+const PRIVACY_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/PRIVACY.md";
+const CONSENT_ISSUE_TITLE: &str = "Rady service agreement";
 
 #[derive(Clone, Debug)]
 pub struct SourceRef {
@@ -127,8 +133,18 @@ pub fn local_files(
     directory: &Path,
     source: &SourceRef,
     required: &[String],
-    identity: Identity,
+    _identity: Identity,
     overwrite: bool,
+) -> Result<BTreeMap<PathBuf, String>> {
+    setup_files(directory, source, required, overwrite, None)
+}
+
+fn setup_files(
+    directory: &Path,
+    source: &SourceRef,
+    required: &[String],
+    overwrite: bool,
+    agreement: Option<&Value>,
 ) -> Result<BTreeMap<PathBuf, String>> {
     let root = directory
         .canonicalize()
@@ -136,34 +152,17 @@ pub fn local_files(
     if !root.is_dir() {
         bail!("--directory must be a directory");
     }
-    let workflow_ref = format!(
-        "{}/.github/workflows/solve.yml@{}",
-        source.repository, source.commit
+    let configuration = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&json!({
+            "schema": 1,
+            "source": source.joined(),
+            "checks": required,
+            "agreement": agreement.cloned().unwrap_or(Value::Null),
+        }))?
     );
-    let responder_ref = format!(
-        "{}/.github/workflows/respond.yml@{}",
-        source.repository, source.commit
-    );
-    let caller = include_str!("dependasolver/templates/dependency.solver.yml")
-        .replace("__SOLVER_REF__", &workflow_ref)
-        .replace("__RESPONDER_REF__", &responder_ref)
-        .replace("__SOURCE_REF__", &source.joined())
-        .replace("__APP_CLIENT_ID__", app_client_id(identity))
-        .replace("__APP_PRIVATE_KEY__", app_private_key(identity))
-        .replace("__WORKFLOW_RUN_TRIGGER__", &workflow_run_trigger(&root)?)
-        .replace(
-            "__REQUIRED_CHECKS__",
-            &serde_json::to_string(required)?.replace('\'', "''"),
-        );
-    let workflow = safe_path(&root, ".github/workflows/dependasolver.yml")?;
-    let selector = safe_path(&root, ".github/workflows/scripts/select-review-targets.sh")?;
-    let mut files = BTreeMap::from([
-        (workflow.clone(), caller),
-        (
-            selector.clone(),
-            include_str!("../.github/workflows/scripts/select-review-targets.sh").to_owned(),
-        ),
-    ]);
+    let config = safe_path(&root, ".github/rady.json")?;
+    let mut files = BTreeMap::from([(config.clone(), configuration)]);
     let dependabot = [
         safe_path(&root, ".github/dependabot.yml")?,
         safe_path(&root, ".github/dependabot.yaml")?,
@@ -175,8 +174,7 @@ pub fn local_files(
         match fs::symlink_metadata(path) {
             Ok(metadata) => {
                 if !metadata.file_type().is_file()
-                    || (fs::read_to_string(path)? != *content
-                        && (!overwrite || (path != &workflow && path != &selector)))
+                    || (fs::read_to_string(path)? != *content && (!overwrite || path != &config))
                 {
                     bail!("refusing to overwrite existing content: {}", path.display());
                 }
@@ -186,83 +184,6 @@ pub fn local_files(
         }
     }
     Ok(files)
-}
-
-fn app_client_id(identity: Identity) -> &'static str {
-    match identity {
-        Identity::Rady => "${{ vars.RADY_APP_CLIENT_ID }}",
-        Identity::Dependasolver => "${{ vars.DEPENDASOLVER_APP_CLIENT_ID }}",
-    }
-}
-
-fn app_private_key(identity: Identity) -> &'static str {
-    match identity {
-        Identity::Rady => "${{ secrets.RADY_APP_PRIVATE_KEY }}",
-        Identity::Dependasolver => "${{ secrets.DEPENDASOLVER_APP_PRIVATE_KEY }}",
-    }
-}
-
-fn workflow_run_trigger(root: &Path) -> Result<String> {
-    let directory = root.join(".github/workflows");
-    let entries = match fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(String::new()),
-        Err(error) => return Err(error.into()),
-    };
-    let mut names = BTreeSet::new();
-    let mut count = 0;
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        let extension = path.extension().and_then(|value| value.to_str());
-        if !entry.file_type()?.is_file()
-            || !matches!(extension, Some("yml" | "yaml"))
-            || matches!(
-                path.file_name().and_then(|value| value.to_str()),
-                Some("dependasolver.yml" | "dependasolver.yaml")
-            )
-        {
-            continue;
-        }
-        count += 1;
-        if count > 100 || entry.metadata()?.len() > 1_000_000 {
-            bail!("GitHub Actions workflow discovery exceeded its safe limit");
-        }
-        let content = fs::read_to_string(&path)?;
-        let name = content
-            .lines()
-            .find_map(|line| line.strip_prefix("name:").map(str::trim))
-            .and_then(workflow_name)
-            .unwrap_or_else(|| {
-                format!(".github/workflows/{}", entry.file_name().to_string_lossy())
-            });
-        if matches!(name.as_str(), "Rady dependasolve" | "Rady response") {
-            continue;
-        }
-        names.insert(name);
-    }
-    if names.is_empty() {
-        return Ok(String::new());
-    }
-    Ok(format!(
-        "  workflow_run:\n    workflows: {}\n    types: [completed]\n    branches: ['dependabot/**']\n",
-        serde_json::to_string(&names)?
-    ))
-}
-
-fn workflow_name(raw: &str) -> Option<String> {
-    let value = if raw.starts_with('"') && raw.ends_with('"') {
-        serde_json::from_str(raw).ok()?
-    } else if raw.starts_with('\'') && raw.ends_with('\'') {
-        raw[1..raw.len().checked_sub(1)?].replace("''", "'")
-    } else {
-        raw.split_once(" #")
-            .map_or(raw, |(value, _)| value)
-            .trim()
-            .to_owned()
-    };
-    (!value.is_empty() && value.len() <= 200 && !value.chars().any(char::is_control))
-        .then_some(value)
 }
 
 const DEPENDABOT_ECOSYSTEMS: &[(&str, &[&str], &[&str])] = &[
@@ -385,8 +306,11 @@ pub fn install(
     new_app: bool,
     identity: Identity,
     overwrite: bool,
+    accept_terms: bool,
 ) -> Result<()> {
-    let files = local_files(directory, source, required, identity, overwrite)?;
+    if !accept_terms {
+        bail!("read {TERMS_URL} and {PRIVACY_URL}, then rerun with --accept-terms if you agree");
+    }
     let info = github::api(&format!("repos/{repo}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("repository response was empty"))?;
     if info["full_name"]
@@ -405,7 +329,16 @@ pub fn install(
     ) {
         bail!("only personal and organisation repositories are supported");
     }
-    for workflow in ["solve.yml", "respond.yml"] {
+    if !repo
+        .split_once('/')
+        .is_some_and(|(owner, _)| owner.eq_ignore_ascii_case(apps::APP_OWNER))
+    {
+        bail!(
+            "central GitHub Actions orchestration currently supports repositories owned by {}",
+            apps::APP_OWNER
+        );
+    }
+    for workflow in ["orchestrate.yml", "solve.yml"] {
         let source_file = github::api(
             &format!(
                 "repos/{}/contents/.github/workflows/{workflow}?ref={}",
@@ -423,15 +356,15 @@ pub fn install(
     let existing = if new_app {
         None
     } else {
-        existing_app(repo, identity)?
+        existing_app(TRUSTED_SOLVER_REPOSITORY, identity)?
     };
     let effective_identity = if let Some(existing) = existing {
         let effective_identity = existing.identity;
         verify_existing_app(existing)?;
         effective_identity
     } else if new_app {
-        let app = apps::register_app(repo, identity)?;
-        apps::credentials(repo, &app, identity)?;
+        let app = apps::register_app(TRUSTED_SOLVER_REPOSITORY, identity)?;
+        apps::credentials(TRUSTED_SOLVER_REPOSITORY, &app, identity)?;
         identity
     } else {
         bail!(
@@ -439,15 +372,14 @@ pub fn install(
             identity.display()
         );
     };
-    let files = if effective_identity == identity {
-        files
-    } else {
-        local_files(directory, source, required, effective_identity, overwrite)?
-    };
+    let existing = existing_app(TRUSTED_SOLVER_REPOSITORY, effective_identity)?
+        .ok_or_else(|| anyhow!("central App credentials disappeared during setup"))?;
+    verify_existing_app(existing.clone())?;
+    ensure_installation(repo, &existing.slug)?;
+    let agreement = agreement(repo)?;
+    let files = setup_files(directory, source, required, overwrite, Some(&agreement))?;
     for (path, content) in files {
-        let replace = overwrite
-            && (path.ends_with(".github/workflows/dependasolver.yml")
-                || path.ends_with(".github/workflows/scripts/select-review-targets.sh"));
+        let replace = overwrite && path.ends_with(".github/rady.json");
         write_setup_file(&path, content.as_bytes(), replace)?;
     }
     github::api(
@@ -459,6 +391,166 @@ pub fn install(
     Ok(())
 }
 
+fn agreement(repo: &str) -> Result<Value> {
+    let user = github::api("user", None, "GET", false)?
+        .ok_or_else(|| anyhow!("GitHub returned no authenticated user"))?;
+    let accepted_by = user["login"]
+        .as_str()
+        .filter(|login| {
+            !login.is_empty()
+                && login.len() <= 100
+                && login
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        })
+        .ok_or_else(|| anyhow!("GitHub returned an invalid authenticated user"))?;
+    let accepted_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_secs();
+    let receipt = create_consent_receipt(repo, accepted_by)?;
+    Ok(json!({
+        "terms": TERMS_VERSION,
+        "privacy": PRIVACY_VERSION,
+        "accepted_by": accepted_by,
+        "accepted_at_unix": accepted_at,
+        "issue": receipt.issue,
+        "comment": receipt.comment,
+    }))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ConsentReceipt {
+    issue: u64,
+    comment: u64,
+}
+
+fn consent_comment(repo: &str) -> String {
+    format!(
+        "Rady service agreement acceptance\n\nI accept the Rady Terms of Use ({TERMS_VERSION}) and Privacy Policy ({PRIVACY_VERSION}) for {repo}."
+    )
+}
+
+fn create_consent_receipt(repo: &str, accepted_by: &str) -> Result<ConsentReceipt> {
+    let issue = github::api(
+        &format!("repos/{repo}/issues"),
+        Some(&json!({
+            "title": CONSENT_ISSUE_TITLE,
+            "body": format!("Accepted by @{accepted_by}. This closed issue is Rady's service-agreement receipt."),
+        })),
+        "POST",
+        false,
+    )?
+    .ok_or_else(|| anyhow!("GitHub returned no consent issue"))?;
+    let number = issue["number"]
+        .as_u64()
+        .filter(|number| *number > 0)
+        .ok_or_else(|| anyhow!("GitHub returned an invalid consent issue"))?;
+    let comment = github::api(
+        &format!("repos/{repo}/issues/{number}/comments"),
+        Some(&json!({"body": consent_comment(repo)})),
+        "POST",
+        false,
+    )?
+    .ok_or_else(|| anyhow!("GitHub returned no consent comment"))?;
+    let comment = comment["id"]
+        .as_u64()
+        .filter(|comment| *comment > 0)
+        .ok_or_else(|| anyhow!("GitHub returned an invalid consent comment"))?;
+    github::api(
+        &format!("repos/{repo}/issues/{number}"),
+        Some(&json!({"state": "closed"})),
+        "PATCH",
+        false,
+    )?;
+    Ok(ConsentReceipt {
+        issue: number,
+        comment,
+    })
+}
+
+pub(crate) fn accepted_configuration(value: &Value) -> bool {
+    value["schema"].as_u64() == Some(1)
+        && value["agreement"]["terms"].as_str() == Some(TERMS_VERSION)
+        && value["agreement"]["privacy"].as_str() == Some(PRIVACY_VERSION)
+        && value["agreement"]["accepted_by"]
+            .as_str()
+            .is_some_and(|login| {
+                !login.is_empty()
+                    && login.len() <= 100
+                    && login
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+            })
+        && value["agreement"]["accepted_at_unix"]
+            .as_u64()
+            .is_some_and(|time| time > 0)
+        && value["agreement"]["issue"]
+            .as_u64()
+            .is_some_and(|number| number > 0)
+        && value["agreement"]["comment"]
+            .as_u64()
+            .is_some_and(|number| number > 0)
+}
+
+pub(crate) fn verified_configuration(github: &github::GitHub, value: &Value) -> Result<bool> {
+    if !accepted_configuration(value) {
+        return Ok(false);
+    }
+    let agreement = &value["agreement"];
+    let accepted_by = agreement["accepted_by"]
+        .as_str()
+        .ok_or_else(|| anyhow!("accepted configuration omitted its signer"))?;
+    let issue = agreement["issue"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("accepted configuration omitted its receipt issue"))?;
+    let comment = agreement["comment"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("accepted configuration omitted its receipt comment"))?;
+    let issue_value = github.api_optional(&format!("issues/{issue}"), None, "GET")?;
+    let comment_value = github.api_optional(&format!("issues/comments/{comment}"), None, "GET")?;
+    let permission = github.api_optional(
+        &format!("collaborators/{accepted_by}/permission"),
+        None,
+        "GET",
+    )?;
+    Ok(receipt_matches(
+        github.repo(),
+        accepted_by,
+        issue,
+        comment,
+        issue_value.as_ref(),
+        comment_value.as_ref(),
+        permission.as_ref(),
+    ))
+}
+
+fn receipt_matches(
+    repo: &str,
+    accepted_by: &str,
+    issue: u64,
+    comment: u64,
+    issue_value: Option<&Value>,
+    comment_value: Option<&Value>,
+    permission: Option<&Value>,
+) -> bool {
+    let issue_url = format!("https://github.com/{repo}/issues/{issue}");
+    let comment_issue_url = format!("https://api.github.com/repos/{repo}/issues/{issue}");
+    issue_value.is_some_and(|value| {
+        value["number"].as_u64() == Some(issue)
+            && value["html_url"].as_str() == Some(&issue_url)
+            && value["title"].as_str() == Some(CONSENT_ISSUE_TITLE)
+            && value["state"].as_str() == Some("closed")
+            && value.get("pull_request").is_none()
+    }) && comment_value.is_some_and(|value| {
+        value["id"].as_u64() == Some(comment)
+            && value["issue_url"].as_str() == Some(&comment_issue_url)
+            && value["user"]["login"].as_str() == Some(accepted_by)
+            && value["body"].as_str() == Some(&consent_comment(repo))
+    }) && permission.is_some_and(|value| value["permission"].as_str() == Some("admin"))
+}
+
+#[derive(Clone)]
 struct ExistingApp {
     identity: Identity,
     client_id: String,
@@ -529,6 +621,29 @@ fn verify_existing_app(existing: ExistingApp) -> Result<()> {
     Ok(())
 }
 
+fn ensure_installation(repo: &str, slug: &str) -> Result<()> {
+    if installation_matches(repo, slug)? {
+        return Ok(());
+    }
+    apps::open_installation(slug, repo)?;
+    eprintln!("Press Enter after granting radyybot access to {repo}");
+    let mut line = String::new();
+    std::io::stdin().read_line(&mut line)?;
+    if !installation_matches(repo, slug)? {
+        bail!("radyybot is not installed for {repo}");
+    }
+    Ok(())
+}
+
+fn installation_matches(repo: &str, slug: &str) -> Result<bool> {
+    let installation = github::api(&format!("repos/{repo}/installation"), None, "GET", true)?;
+    Ok(installation.is_some_and(|installation| {
+        installation["app_slug"]
+            .as_str()
+            .is_some_and(|value| value.eq_ignore_ascii_case(slug))
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     repo: &str,
@@ -539,6 +654,7 @@ pub fn run(
     new_app: bool,
     overwrite: bool,
     apply: bool,
+    accept_terms: bool,
 ) -> Result<Value> {
     github::validate_repository(repo)?;
     let required = checks(required)?;
@@ -549,6 +665,11 @@ pub fn run(
         "required_checks": required,
         "files": files.keys().map(|path| path.display().to_string()).collect::<Vec<_>>(),
         "app_owner": apps::APP_OWNER,
+        "credentials_repository": TRUSTED_SOLVER_REPOSITORY,
+        "orchestration": "central",
+        "terms": {"version": TERMS_VERSION, "url": TERMS_URL},
+        "privacy": {"version": PRIVACY_VERSION, "url": PRIVACY_URL},
+        "agreement_required": !accept_terms,
         "app_public": true,
         "new_app": new_app,
         "app_permissions": apps::permissions(),
@@ -558,7 +679,14 @@ pub fn run(
     });
     if apply {
         install(
-            repo, source, &required, directory, new_app, identity, overwrite,
+            repo,
+            source,
+            &required,
+            directory,
+            new_app,
+            identity,
+            overwrite,
+            accept_terms,
         )?;
     }
     Ok(preview)
@@ -663,44 +791,39 @@ mod tests {
     }
 
     #[test]
-    fn generated_workflow_overwrites_by_default_and_can_be_protected() -> Result<()> {
+    fn generated_configuration_overwrites_by_default_and_can_be_protected() -> Result<()> {
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "b".repeat(40)))?;
-        for generated_path in [
-            ".github/workflows/dependasolver.yml",
-            ".github/workflows/scripts/select-review-targets.sh",
-        ] {
-            let temporary = tempfile::tempdir()?;
-            let path = temporary.path().join(generated_path);
-            fs::create_dir_all(path.parent().expect("generated file parent"))?;
-            fs::write(&path, "existing generated content\n")?;
-            assert!(
-                local_files(
-                    temporary.path(),
-                    &source,
-                    &["test".into()],
-                    Identity::Rady,
-                    false
-                )
-                .is_err(),
-                "{generated_path} must honour --no-overwrite"
-            );
-            let files = local_files(
+        let temporary = tempfile::tempdir()?;
+        let path = temporary.path().join(".github/rady.json");
+        fs::create_dir_all(path.parent().expect("generated file parent"))?;
+        fs::write(&path, "existing generated content\n")?;
+        assert!(
+            local_files(
                 temporary.path(),
                 &source,
                 &["test".into()],
                 Identity::Rady,
-                true,
-            )?;
-            let generated = files
-                .iter()
-                .find(|(candidate, _)| candidate.ends_with(generated_path))
-                .map(|(_, content)| content)
-                .expect("generated file content");
-            write_setup_file(&path, generated.as_bytes(), true)?;
-            assert_eq!(fs::read_to_string(&path)?, *generated);
-            assert!(write_setup_file(&path, b"blocked update\n", false).is_err());
-            assert_eq!(fs::read_to_string(&path)?, *generated);
-        }
+                false
+            )
+            .is_err(),
+            "--no-overwrite must protect the agreement file"
+        );
+        let files = local_files(
+            temporary.path(),
+            &source,
+            &["test".into()],
+            Identity::Rady,
+            true,
+        )?;
+        let generated = files
+            .iter()
+            .find(|(candidate, _)| candidate.ends_with(".github/rady.json"))
+            .map(|(_, content)| content)
+            .expect("generated configuration");
+        write_setup_file(&path, generated.as_bytes(), true)?;
+        assert_eq!(fs::read_to_string(&path)?, *generated);
+        assert!(write_setup_file(&path, b"blocked update\n", false).is_err());
+        assert_eq!(fs::read_to_string(&path)?, *generated);
         Ok(())
     }
 
@@ -711,17 +834,99 @@ mod tests {
             ["test", "lint"]
         );
         assert!(checks(&["Rady dependasolve gate".into()]).is_err());
-        for (raw, expected) in [
-            ("CI", Some("CI")),
-            ("CI # branch checks", Some("CI")),
-            ("\"Build\"", Some("Build")),
-            ("'Release ''safe'''", Some("Release 'safe'")),
-            ("", None),
-            ("bad\nname", None),
+        for (configuration, accepted) in [
+            (
+                json!({
+                    "schema": 1,
+                    "agreement": {
+                        "terms": TERMS_VERSION,
+                        "privacy": PRIVACY_VERSION,
+                        "accepted_by": "keys-i",
+                        "accepted_at_unix": 1,
+                        "issue": 1,
+                        "comment": 2,
+                    }
+                }),
+                true,
+            ),
+            (json!({"schema": 1, "agreement": null}), false),
+            (
+                json!({
+                    "schema": 1,
+                    "agreement": {
+                        "terms": TERMS_VERSION,
+                        "privacy": PRIVACY_VERSION,
+                        "accepted_by": "keys-i",
+                        "accepted_at_unix": 1,
+                    }
+                }),
+                false,
+            ),
+            (
+                json!({
+                    "schema": 1,
+                    "agreement": {
+                        "terms": "old",
+                        "privacy": PRIVACY_VERSION,
+                        "accepted_by": "keys-i",
+                        "accepted_at_unix": 1,
+                        "issue": 1,
+                        "comment": 2,
+                    }
+                }),
+                false,
+            ),
         ] {
-            assert_eq!(workflow_name(raw).as_deref(), expected, "{raw:?}");
+            assert_eq!(accepted_configuration(&configuration), accepted);
         }
         Ok(())
+    }
+
+    #[test]
+    fn consent_receipt_requires_exact_authenticated_evidence() {
+        let repo = "keys-i/rady";
+        let issue = json!({
+            "number": 7,
+            "html_url": "https://github.com/keys-i/rady/issues/7",
+            "title": CONSENT_ISSUE_TITLE,
+            "state": "closed",
+        });
+        let comment = json!({
+            "id": 9,
+            "issue_url": "https://api.github.com/repos/keys-i/rady/issues/7",
+            "user": {"login": "keys-i"},
+            "body": consent_comment(repo),
+        });
+        let permission = json!({"permission": "admin"});
+        for (issue_value, comment_value, permission_value, valid) in [
+            (issue.clone(), comment.clone(), permission.clone(), true),
+            (
+                json!({"state": "open"}),
+                comment.clone(),
+                permission.clone(),
+                false,
+            ),
+            (
+                issue.clone(),
+                json!({"user": {"login": "other"}}),
+                permission.clone(),
+                false,
+            ),
+            (issue, comment, json!({"permission": "write"}), false),
+        ] {
+            assert_eq!(
+                receipt_matches(
+                    repo,
+                    "keys-i",
+                    7,
+                    9,
+                    Some(&issue_value),
+                    Some(&comment_value),
+                    Some(&permission_value),
+                ),
+                valid
+            );
+        }
     }
 
     #[test]
@@ -766,27 +971,13 @@ mod tests {
     }
 
     #[test]
-    fn existing_dependabot_configuration_is_left_untouched() -> Result<()> {
+    fn central_configuration_keeps_credentials_out_of_target_repositories() -> Result<()> {
         let temporary = tempfile::tempdir()?;
         fs::create_dir_all(temporary.path().join(".github"))?;
         fs::write(
             temporary.path().join(".github/dependabot.yaml"),
             "version: 2\n",
         )?;
-        fs::create_dir_all(temporary.path().join(".github/workflows"))?;
-        fs::write(
-            temporary.path().join(".github/workflows/ci.yml"),
-            "name: CI\non: [pull_request]\n",
-        )?;
-        for (file, name) in [
-            ("solve.yml", "Rady dependasolve"),
-            ("respond.yml", "Rady response"),
-        ] {
-            fs::write(
-                temporary.path().join(".github/workflows").join(file),
-                format!("name: {name}\non: [workflow_call]\n"),
-            )?;
-        }
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
         let files = local_files(
             temporary.path(),
@@ -795,209 +986,52 @@ mod tests {
             Identity::Rady,
             true,
         )?;
-        let workflow = files
+        assert_eq!(files.len(), 1);
+        let configuration = files
             .iter()
-            .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
-            .map(|(_, content)| content)
-            .expect("generated caller workflow");
-        let selector_script = files
-            .iter()
-            .find(|(path, _)| path.ends_with(".github/workflows/scripts/select-review-targets.sh"))
-            .map(|(_, content)| content)
-            .expect("generated selector script");
-        assert!(workflow.contains("check_run:"));
-        assert!(workflow.contains("workflow_run:"));
-        assert!(workflow.contains("issue_comment:"));
-        let selector = workflow
-            .split_once("\n  select:\n")
-            .and_then(|(_, rest)| rest.split_once("\n  review-current:\n"))
-            .map(|(selector, _)| selector)
-            .expect("generated selector job");
-        for event in ["push", "schedule", "workflow_dispatch"] {
-            assert!(
-                selector.contains(&format!("github.event_name == '{event}'")),
-                "{event} must retain backlog selection"
-            );
-        }
-        for event in [
-            "pull_request_target",
-            "workflow_run",
-            "check_run",
-            "issue_comment",
-        ] {
-            assert!(
-                !selector.contains(&format!("github.event_name == '{event}'")),
-                "{event} must bypass backlog selection"
-            );
-        }
-        assert!(selector.contains(
-            "group: rady-selection-${{ github.repository }}-${{ inputs.pr-number || 'backlog' }}"
-        ));
-        assert!(selector.contains("cancel-in-progress: true"));
-        assert!(selector.contains("Check out workflow scripts"));
-        assert!(selector.contains("sparse-checkout: .github/workflows/scripts"));
-        assert!(selector.contains("persist-credentials: false"));
-        assert!(selector.contains("run: bash .github/workflows/scripts/select-review-targets.sh"));
-        assert!(!selector.contains("backlog() {"));
-        assert!(
-            selector_script
-                .contains("if [[ -n \"$PR_NUMBER\" ]]; then one \"$PR_NUMBER\"; else backlog; fi")
-        );
-        assert!(selector_script.contains("push|schedule) backlog"));
-        let direct_review = workflow
-            .split_once("\n  review-current:\n")
-            .and_then(|(_, rest)| rest.split_once("\n  review:\n"))
-            .map(|(review, _)| review)
-            .expect("generated direct review job");
-        assert!(!direct_review.contains("needs: select"));
-        for event in ["pull_request_target", "workflow_run", "check_run"] {
-            assert!(direct_review.contains(&format!("github.event_name == '{event}'")));
-        }
-        for predicate in [
-            "github.event.action != 'closed'",
-            "!github.event.pull_request.draft",
-            "github.event.workflow_run.status == 'completed'",
-            "github.event.workflow_run.pull_requests[0].number > 0",
-            "!startsWith(github.event.workflow_run.name, 'Rady dependasolve')",
-            "github.event.check_run.status == 'completed'",
-            "github.event.check_run.pull_requests[0].number > 0",
-            "!startsWith(github.event.check_run.name, 'Rady dependasolve gate')",
-            "!startsWith(github.event.check_run.name, 'Rady dependasolve /')",
-        ] {
-            assert!(direct_review.contains(predicate), "missing {predicate}");
-        }
-        assert!(direct_review.contains("pr-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}"));
-        assert!(direct_review.contains("required-checks: '[\"check\"]'"));
-        assert!(direct_review.contains(&format!(
-            "uses: keys-i/rady/.github/workflows/solve.yml@{}",
-            "a".repeat(40)
-        )));
-        assert!(workflow.contains("github.event.comment.body == '@radyybot'"));
-        assert!(workflow.contains("startsWith(github.event.comment.body, '@radyybot ')"));
-        assert!(!workflow.contains("startsWith(github.event.comment.body, '@rady ')"));
-        assert!(workflow.contains("schedule:"));
-        assert!(workflow.contains("max-parallel: 1"));
-        assert!(workflow.contains("PRIVATE_REPOSITORY: ${{ github.event.repository.private }}"));
-        assert!(selector_script.contains(".author_association == \"OWNER\""));
-        assert!(selector_script.contains(".author_association == \"MEMBER\""));
-        assert!(selector_script.contains(".author_association == \"COLLABORATOR\""));
-        assert!(selector_script.contains("Rady backfill supports at most 300 open pull requests"));
-        assert!(workflow.contains("workflows: [\"CI\"]"));
-        assert!(workflow.contains("name: Rady dependasolve gate"));
-        assert!(workflow.contains(&format!(
-            "uses: keys-i/rady/.github/workflows/respond.yml@{}",
-            "a".repeat(40)
-        )));
-        assert!(!workflow.contains("__RESPONDER_REF__"));
-        assert!(workflow.contains("app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}"));
-        assert!(workflow.contains("app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}"));
-        assert!(workflow.contains("model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}"));
-        let responder = workflow
-            .rsplit_once("\n  respond:\n")
-            .map(|(_, responder)| responder)
-            .expect("generated responder job");
-        assert!(!responder.contains("needs: select"));
-        assert!(responder.contains("github.event.comment.author_association == 'OWNER'"));
-        assert!(responder.contains("issue-number: ${{ github.event.issue.number }}"));
-        assert!(responder.contains("comment-id: ${{ github.event.comment.id }}"));
-        assert!(responder.contains("cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}"));
-        assert!(responder.contains("gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}"));
-        assert!(responder.contains("xai-api-key: ${{ secrets.RADY_XAI_API_KEY }}"));
-        assert!(
-            responder.contains("gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}")
-        );
-        assert!(responder.contains("xai-private-ok: ${{ vars.RADY_XAI_PRIVATE_OK == 'true' }}"));
-        assert!(!responder.contains("model: ${{ vars.RADY_MODEL"));
-        assert!(!responder.contains("harness: ${{ vars.RADY_HARNESS"));
-        assert!(!workflow.contains("RADY_APP_CLIENT_ID ||"));
-        let legacy = local_files(
-            temporary.path(),
-            &source,
-            &["check".to_owned()],
-            Identity::Dependasolver,
-            true,
-        )?;
-        let legacy = legacy
-            .iter()
-            .find(|(path, _)| path.ends_with(".github/workflows/dependasolver.yml"))
-            .map(|(_, content)| content)
-            .expect("legacy workflow");
-        assert!(legacy.contains("app-client-id: ${{ vars.DEPENDASOLVER_APP_CLIENT_ID }}"));
-        assert!(legacy.contains("app-private-key: ${{ secrets.DEPENDASOLVER_APP_PRIVATE_KEY }}"));
-        assert!(!legacy.contains("RADY_APP_CLIENT_ID"));
-        let solver = include_str!("../.github/workflows/solve.yml");
-        let suspend = solver
-            .find("Suspend stale Dependabot auto-merge")
-            .expect("early auto-merge suspension");
-        let script_checkout = solver
-            .find("Check out trusted workflow scripts")
-            .expect("trusted script checkout");
-        let checkout = solver
-            .find("repository: ${{ steps.source.outputs.repository }}")
-            .expect("solver checkout");
-        let preflight = solver
-            .find("Validate pull request trust boundary")
-            .expect("public repository preflight");
-        let harness_gate = solver
-            .find("Require a native public review harness")
-            .expect("public harness gate");
-        let review = solver.find("\n  review:\n").expect("review job");
-        assert!(script_checkout < preflight);
-        assert!(preflight < checkout);
-        assert!(preflight < review);
-        assert!(harness_gate < checkout);
-        assert!(suspend < checkout);
-        assert!(solver.contains("runs-on: ubuntu-latest"));
-        assert!(solver.contains(
-            "  review:\n    needs: preflight\n    if: needs.preflight.outputs.allowed == 'true'"
-        ));
-        let trust_script = include_str!("../.github/workflows/scripts/validate-pr-trust.sh");
-        assert!(
-            trust_script.contains(
-                "Public repositories run Rady only for same-repository Dependabot or trusted collaborator pull requests"
-            )
-        );
-        assert!(trust_script.contains(".user.login == \"dependabot[bot]\""));
-        assert!(trust_script.contains(".head.repo.full_name == $repo"));
-        assert!(trust_script.contains(".author_association == \"OWNER\""));
-        assert!(trust_script.contains(".author_association == \"MEMBER\""));
-        assert!(trust_script.contains(".author_association == \"COLLABORATOR\""));
-        assert_eq!(solver.matches("actions/checkout@").count(), 3);
-        assert!(solver.contains("repository: ${{ steps.source.outputs.repository }}"));
-        assert!(solver.contains("^keys-i/rady@([a-f0-9]{40})$"));
-        assert!(solver.contains("repository=keys-i/rady"));
-        assert!(solver.contains("inputs.app-client-id"));
-        assert!(solver.contains("secrets.app-private-key"));
-        assert!(solver.contains("Create repository-scoped GitHub App token"));
-        assert!(!solver.contains("rady-app-client-id"));
-        let auto_merge = &solver[solver
-            .find("Require protected branch and enable auto-merge")
-            .expect("auto-merge gate")..];
-        assert!(auto_merge.contains("GH_TOKEN: ${{ steps.app-token.outputs.token }}"));
-        assert!(!auto_merge.contains("contains($required)"));
-        let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/setup.rs"));
-        let install = &source[source.find("pub fn install(").expect("install function")
-            ..source.find("\nstruct ExistingApp").expect("install end")];
-        assert!(
-            install
-                .find("let existing = if new_app")
-                .expect("credential resolution")
-                < install
-                    .find("for (path, content) in files {")
-                    .expect("local writes")
-        );
-        assert!(!install.contains("/branches/{branch}/protection"));
-        assert!(
-            solver
-                .find("Validate trusted solver source")
-                .expect("source gate")
-                < script_checkout
-        );
+            .find(|(path, _)| path.ends_with(".github/rady.json"))
+            .map(|(_, content)| serde_json::from_str::<Value>(content))
+            .expect("generated Rady configuration")?;
+        assert_eq!(configuration["schema"], 1);
+        assert_eq!(configuration["source"], source.joined());
+        assert_eq!(configuration["checks"], json!(["check"]));
+        assert!(configuration["agreement"].is_null());
         assert!(
             !files
                 .keys()
                 .any(|path| path.ends_with(".github/dependabot.yml"))
         );
+
+        let orchestrator = include_str!("../.github/workflows/orchestrate.yml");
+        let solver = include_str!("../.github/workflows/solve.yml");
+        let selector = include_str!("../.github/workflows/scripts/select-central-targets.sh");
+        for secret in [
+            "RADY_APP_PRIVATE_KEY",
+            "RADY_APP_CLIENT_ID",
+            "RADY_APP_SLUG",
+            "RADY_GEMINI_API_KEY",
+            "RADY_CEREBRAS_API_KEY",
+            "RADY_XAI_API_KEY",
+        ] {
+            assert!(orchestrator.contains(secret));
+            assert!(!serde_json::to_string(&configuration)?.contains(secret));
+        }
+        assert!(orchestrator.contains("target/release/rady agent sweep --owner keys-i"));
+        assert!(orchestrator.contains("uses: ./.github/workflows/solve.yml"));
+        assert!(orchestrator.contains("permission-issues: read"));
+        assert!(!orchestrator.contains("runs-on: self-hosted"));
+        assert!(!solver.contains("runs-on: self-hosted"));
+        assert!(solver.contains("repo:"));
+        assert!(solver.contains("repo-owner:"));
+        assert!(solver.contains("repo-name:"));
+        assert!(solver.contains("owner: ${{ inputs.repo-owner }}"));
+        assert!(solver.contains("repositories: ${{ inputs.repo-name }}"));
+        assert!(selector.contains(".agreement.terms == \"2026-09-23\""));
+        assert!(selector.contains(".agreement.privacy == \"2026-09-23\""));
+        assert!(selector.contains("collaborators/$signer/permission"));
+        assert!(selector.contains("Rady service agreement acceptance"));
+        assert!(selector.contains(".head.repo.full_name == $repository"));
+        assert!(selector.contains(".author_association == \"OWNER\""));
         Ok(())
     }
 }

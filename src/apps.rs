@@ -1,19 +1,16 @@
 use std::collections::BTreeMap;
-use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use crate::Result;
+use crate::github;
+use crate::ui::RADY_DUCK_PNG;
 use anyhow::{Context, anyhow, bail};
 use clap::ValueEnum;
 use regex::Regex;
 use serde_json::{Value, json};
-use tempfile::Builder;
-
-use crate::Result;
-use crate::github;
-use crate::ui::RADY_DUCK_PNG;
 
 pub const APP_OWNER: &str = "keys-i";
 const DUCK_ROUTE: &str = "/rady-duck.png";
@@ -65,10 +62,10 @@ pub fn manifest(repo: &str, callback: &str, identity: Identity) -> Value {
     json!({
         "name": match identity {
             Identity::Dependasolver => identity.display(),
-            Identity::Rady => "Rady by keys-i",
+            Identity::Rady => "radyybot",
         },
         "url": format!("https://github.com/{repo}"),
-        "description": "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @radyybot requests.",
+        "description": "Rady reviews dependency updates from their diff and CI evidence, enables protected auto-merge when safe, and answers trusted @radyybot requests.",
         "public": true,
         "hook_attributes": {"active": false, "url": format!("https://github.com/{repo}")},
         "redirect_url": callback,
@@ -145,6 +142,17 @@ pub fn public_app(slug: &str) -> Result<Value> {
         .ok_or_else(|| anyhow!("could not verify the existing public App"))
 }
 
+pub fn open_installation(slug: &str, repo: &str) -> Result<()> {
+    github::validate_repository(repo)?;
+    if !Regex::new(r"^[a-z0-9-]+$")?.is_match(slug) {
+        bail!("the configured GitHub App slug is invalid");
+    }
+    let install = format!("https://github.com/apps/{slug}/installations/new");
+    eprintln!("Install radyybot with Only select repositories -> {repo}");
+    open_browser(&install);
+    Ok(())
+}
+
 pub fn register_app(repo: &str, identity: Identity) -> Result<Value> {
     let owner = github::api(&format!("users/{APP_OWNER}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("could not resolve App owner"))?;
@@ -183,7 +191,7 @@ pub fn register_app(repo: &str, identity: Identity) -> Result<Value> {
     let form = setup_page(
         "Connect your repository",
         &format!(
-            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review pull requests from their diff and CI results, safely replace conflicted low-risk Dependabot updates, and respond when a trusted collaborator writes <code>@radyybot</code>.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read and write</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Issues</dt><dd>Read and write</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
+            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review dependency pull requests from their diff and CI evidence, enable protected auto-merge when safe, and respond when a trusted collaborator writes <code>@radyybot</code>.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read and write</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Issues</dt><dd>Read and write</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
             escape_html(repo),
             escape_html(&action),
             escape_html(&serde_json::to_string(&config)?)
@@ -241,22 +249,9 @@ pub fn credentials(repo: &str, app: &Value, identity: Identity) -> Result<()> {
         .as_str()
         .filter(|value| Regex::new(r"^[a-z0-9-]+$").is_ok_and(|regex| regex.is_match(value)))
         .ok_or_else(|| anyhow!("App registration returned no valid slug"))?;
-    let recovery = Builder::new()
-        .prefix("rady-app-")
-        .suffix(".pem")
-        .tempfile()?;
-    fs::write(recovery.path(), pem)?;
-    let (_, recovery_path) = recovery.keep()?;
-    let result = save_credentials(repo, identity, client_id, pem, slug);
-    if let Err(error) = result {
-        eprintln!(
-            "App private key retained with owner-only permissions at {}",
-            recovery_path.display()
-        );
-        eprintln!("App Client ID: {client_id}. App slug: {slug}");
-        return Err(error);
-    }
-    fs::remove_file(&recovery_path)?;
+    save_credentials(repo, identity, client_id, pem, slug).with_context(|| {
+        format!("could not store App credentials in {repo}; no private key was written locally")
+    })?;
     let install = format!("https://github.com/apps/{slug}/installations/new");
     eprintln!("Install the App with Only select repositories -> {repo}");
     open_browser(&install);
@@ -572,12 +567,12 @@ mod tests {
     }
 
     #[test]
-    fn manifest_uses_the_available_rady_name_and_product_description() {
+    fn manifest_uses_the_radyybot_name_and_product_description() {
         let manifest = manifest("keys-i/rady", "http://127.0.0.1/callback", Identity::Rady);
-        assert_eq!(manifest["name"], "Rady by keys-i");
+        assert_eq!(manifest["name"], "radyybot");
         assert_eq!(
             manifest["description"],
-            "Rady reviews evidence, replaces conflicted low-risk dependency updates, and answers trusted @radyybot requests."
+            "Rady reviews dependency updates from their diff and CI evidence, enables protected auto-merge when safe, and answers trusted @radyybot requests."
         );
     }
 

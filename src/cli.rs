@@ -18,7 +18,7 @@ use crate::Result;
 use crate::agent::{self, Harness};
 use crate::apps::Identity;
 use crate::delivery::{self, Config};
-use crate::github::GitHub;
+use crate::github::{self, GitHub};
 use crate::quality;
 use crate::repair;
 use crate::reviews;
@@ -109,6 +109,9 @@ enum AgentCommands {
 
     #[command(hide = true)]
     Respond(RespondArgs),
+
+    #[command(hide = true)]
+    Sweep(SweepArgs),
 
     #[command(hide = true)]
     PrepareRepair(PrepareRepairArgs),
@@ -221,6 +224,10 @@ struct DependSolveArgs {
 
     #[arg(long)]
     apply: bool,
+
+    /// Accept the current Rady service terms and privacy policy for this repository
+    #[arg(long, requires = "apply")]
+    accept_terms: bool,
 }
 
 #[derive(Debug, Args)]
@@ -279,6 +286,14 @@ struct RespondArgs {
     issue: u64,
     #[arg(long)]
     comment: u64,
+    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
+    harness: Harness,
+}
+
+#[derive(Debug, Args)]
+struct SweepArgs {
+    #[arg(long, default_value = "keys-i")]
+    owner: String,
     #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
     harness: Harness,
 }
@@ -440,6 +455,7 @@ where
             AgentCommands::Resolve(arguments) => resolve(arguments),
             AgentCommands::Review(arguments) => review(arguments),
             AgentCommands::Respond(arguments) => respond(arguments),
+            AgentCommands::Sweep(arguments) => sweep(arguments),
             AgentCommands::PrepareRepair(arguments) => prepare_repair(arguments),
         },
         Commands::Resolve(arguments) => resolve(arguments),
@@ -593,6 +609,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
         arguments.new_app,
         !arguments.no_overwrite,
         arguments.apply,
+        arguments.accept_terms,
     )?;
     ui.stage(if arguments.apply {
         "Repository configured"
@@ -622,9 +639,9 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             arguments.checks.join(", "),
             files,
             if arguments.apply {
-                "Repository settings and App credentials are configured. After this workflow lands on the default branch, it scans existing Dependabot pull requests."
+                "radyybot is installed, consent is recorded, and central orchestration will pick up mentions and pending pull requests."
             } else {
-                "Run again with `--apply` after reviewing this preview."
+                "Read `docs/TERMS.md` and `docs/PRIVACY.md`, then run again with `--apply --accept-terms` if you agree."
             }
         );
         print_markdown(&markdown, theme)?;
@@ -773,6 +790,147 @@ fn respond(arguments: RespondArgs) -> Result<()> {
             .as_deref(),
         arguments.harness,
     )
+}
+
+const MAX_SWEEP_REPOSITORIES: usize = 100;
+const MAX_SWEEP_COMMENTS: usize = 100;
+const MAX_SWEEP_FAILURES: usize = 8;
+
+fn sweep(arguments: SweepArgs) -> Result<()> {
+    github::validate_repository(&format!("{}/rady", arguments.owner))?;
+    let token = env::var("GH_TOKEN").unwrap_or_default();
+    let installation = github::api(
+        &format!("installation/repositories?per_page={MAX_SWEEP_REPOSITORIES}"),
+        None,
+        "GET",
+        false,
+    )?
+    .ok_or_else(|| anyhow!("GitHub returned no installed repositories"))?;
+    let repositories = installation["repositories"]
+        .as_array()
+        .ok_or_else(|| anyhow!("GitHub installation response omitted repositories"))?;
+    if installation["total_count"].as_u64().unwrap_or(u64::MAX)
+        > u64::try_from(repositories.len()).unwrap_or_default()
+        || repositories.len() > MAX_SWEEP_REPOSITORIES
+    {
+        bail!(
+            "Rady's central sweep supports at most {MAX_SWEEP_REPOSITORIES} installed repositories"
+        );
+    }
+
+    let model = env::var("RADY_MODEL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let mut failures = Vec::new();
+    let mut repositories = repositories.iter().collect::<Vec<_>>();
+    repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
+    for repository in repositories {
+        if repository["archived"].as_bool() == Some(true)
+            || repository["disabled"].as_bool() == Some(true)
+        {
+            continue;
+        }
+        let Some(name) = repository["full_name"].as_str().filter(|name| {
+            repository["owner"]["login"]
+                .as_str()
+                .is_some_and(|owner| owner.eq_ignore_ascii_case(&arguments.owner))
+                && github::validate_repository(name).is_ok()
+        }) else {
+            continue;
+        };
+        let private = repository["private"].as_bool();
+        let github = GitHub::new(name, &token)?;
+        let accepted = match github
+            .raw_optional("contents/.github/rady.json")?
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        {
+            Some(configuration) => match setup::verified_configuration(&github, &configuration) {
+                Ok(accepted) => accepted,
+                Err(error) => {
+                    record_sweep_failure(&mut failures, name, &error);
+                    continue;
+                }
+            },
+            None => false,
+        };
+        if !accepted {
+            continue;
+        }
+        let comments = match github.api(
+            &format!("issues/comments?sort=created&direction=desc&per_page={MAX_SWEEP_COMMENTS}"),
+            None,
+            "GET",
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                record_sweep_failure(&mut failures, name, &error);
+                continue;
+            }
+        };
+        let Some(comments) = comments.as_array() else {
+            record_sweep_failure(
+                &mut failures,
+                name,
+                &anyhow!("GitHub comments response was not a list"),
+            );
+            continue;
+        };
+        for comment in comments.iter().rev() {
+            let Some(body) = comment["body"].as_str().filter(|body| {
+                matches!(
+                    comment["author_association"].as_str(),
+                    Some("OWNER" | "MEMBER" | "COLLABORATOR")
+                ) && crate::mentions::is_invocation(body)
+            }) else {
+                continue;
+            };
+            let (Some(comment_id), Some(issue)) = (
+                comment["id"].as_u64(),
+                comment_issue(name, comment["issue_url"].as_str().unwrap_or_default()),
+            ) else {
+                record_sweep_failure(
+                    &mut failures,
+                    name,
+                    &anyhow!("GitHub returned an invalid mention comment"),
+                );
+                continue;
+            };
+            let _ = body;
+            if let Err(error) = crate::mentions::respond_for_repository(
+                &github,
+                issue,
+                comment_id,
+                model.as_deref(),
+                arguments.harness,
+                private,
+            ) {
+                record_sweep_failure(&mut failures, name, &error);
+            }
+        }
+    }
+    if failures.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "central sweep had {} failure(s): {}",
+        failures.len(),
+        failures.join("; ")
+    )
+}
+
+fn comment_issue(repo: &str, issue_url: &str) -> Option<u64> {
+    let prefix = format!("https://api.github.com/repos/{repo}/issues/");
+    issue_url
+        .strip_prefix(&prefix)?
+        .parse::<u64>()
+        .ok()
+        .filter(|number| *number > 0)
+}
+
+fn record_sweep_failure(failures: &mut Vec<String>, repo: &str, error: &anyhow::Error) {
+    if failures.len() < MAX_SWEEP_FAILURES {
+        failures.push(format!("{repo}: {error}"));
+    }
 }
 
 fn prepare_repair(arguments: PrepareRepairArgs) -> Result<()> {
@@ -961,6 +1119,7 @@ mod tests {
                 "--comment",
                 "2",
             ],
+            vec!["rady", "agent", "sweep", "--owner", "keys-i"],
         ] {
             Cli::try_parse_from(arguments).expect("command must parse");
         }
@@ -981,6 +1140,30 @@ mod tests {
         assert!(arguments.solver_ref.is_none());
         assert!(arguments.no_overwrite);
         assert_eq!(arguments.identity, Identity::Rady);
+    }
+
+    #[test]
+    fn central_sweep_accepts_only_canonical_issue_urls() {
+        for (repo, url, expected) in [
+            (
+                "keys-i/rady",
+                "https://api.github.com/repos/keys-i/rady/issues/42",
+                Some(42),
+            ),
+            (
+                "keys-i/rady",
+                "https://api.github.com/repos/other/rady/issues/42",
+                None,
+            ),
+            (
+                "keys-i/rady",
+                "https://api.github.com/repos/keys-i/rady/issues/0",
+                None,
+            ),
+            ("keys-i/rady", "not-a-url", None),
+        ] {
+            assert_eq!(comment_issue(repo, url), expected, "{url}");
+        }
     }
 
     #[test]
