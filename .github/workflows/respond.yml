@@ -19,6 +19,9 @@ on:
       gemini-private-ok:
         default: false
         type: boolean
+      xai-private-ok:
+        default: false
+        type: boolean
     secrets:
       app-private-key:
         required: true
@@ -26,6 +29,8 @@ on:
         required: true
       cerebras-api-key:
         required: true
+      xai-api-key:
+        required: false
 
 permissions: {}
 
@@ -34,15 +39,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  preflight:
+  respond:
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
+    timeout-minutes: 10
+    permissions: {}
     steps:
-      - name: Validate immutable source and event identifiers
+      - name: Validate trusted request and solver source
+        id: source
         shell: bash
         env:
           SOLVER_REF: ${{ inputs.solver-ref }}
@@ -54,6 +57,7 @@ jobs:
             echo 'solver-ref must be keys-i/rady@40_LOWERCASE_COMMIT_SHA' >&2
             exit 1
           }
+          sha="${SOLVER_REF#keys-i/rady@}"
           [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
             echo 'issue-number must be positive' >&2
             exit 1
@@ -62,31 +66,29 @@ jobs:
             echo 'comment-id must be positive' >&2
             exit 1
           }
-
-  respond:
-    needs: preflight
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions: {}
-    steps:
-      - name: Validate trusted solver source
-        id: source
-        shell: bash
-        env:
-          SOLVER_REF: ${{ inputs.solver-ref }}
-        run: |
-          set -euo pipefail
-          [[ "$SOLVER_REF" =~ ^keys-i/rady@([a-f0-9]{40})$ ]] || exit 1
           echo 'repository=keys-i/rady' >> "$GITHUB_OUTPUT"
-          echo "sha=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       # Check out only the immutable Rady source, never issue or pull-request code
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ steps.source.outputs.repository }}
           ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
+      - name: Identify Rust toolchain
+        id: toolchain
+        shell: bash
+        run: echo "version=$(rustc -V | tr ' ' '-')" >> "$GITHUB_OUTPUT"
+      - name: Restore Rady build cache
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: rady-${{ runner.os }}-${{ steps.toolchain.outputs.version }}-${{ steps.source.outputs.sha }}-${{ hashFiles('Cargo.lock') }}
       - name: Build trusted Rady
-        run: cargo build --release --locked
+        run: cargo build --release --locked --bin rady
       - name: Create repository-scoped Rady App token
         id: app-token
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
@@ -108,8 +110,10 @@ jobs:
           COMMENT_ID: ${{ inputs.comment-id }}
           RADY_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
           RADY_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
+          RADY_XAI_API_KEY: ${{ secrets.xai-api-key }}
           RADY_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
           RADY_GEMINI_PRIVATE_OK: ${{ inputs.gemini-private-ok }}
+          RADY_XAI_PRIVATE_OK: ${{ inputs.xai-private-ok }}
         run: |
           set -euo pipefail
           target/release/rady agent respond \

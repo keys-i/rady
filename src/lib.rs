@@ -9,6 +9,7 @@ pub mod model;
 pub mod quality;
 pub mod repair;
 pub mod reviews;
+pub mod routing;
 pub mod runs;
 pub mod setup;
 pub mod ui;
