@@ -1,7 +1,0 @@
-{
-  "schema": 1,
-  "repository": "keys-i/rady",
-  "fromVersion": "0.1.0",
-  "throughVersion": "0.5.5",
-  "tagPrefix": "v"
-}
