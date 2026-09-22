@@ -1,3 +1,4 @@
+use std::env;
 use std::path::Path;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use tempfile::tempdir;
 
 use crate::Result;
 use crate::agent::{self, Harness};
+use crate::routing;
 
 pub const STYLE: &str = "Write like a thoughtful Australian teammate: plain English, Australian spelling, warm and direct. Avoid forced slang, stock praise and corporate filler. Be specific, fair and brief.";
 
@@ -44,18 +46,29 @@ pub fn model_review(context: &Value, model: Option<&str>, harness: Harness) -> R
         },
         "required": ["summary", "risk", "observations", "blockers", "minor"]
     });
-    let directory = tempdir()?;
-    let response = agent::evaluate(
-        &serde_json::to_string(context)?,
-        &schema,
-        Path::new(directory.path()),
-        &format!("{STYLE} {INSTRUCTIONS}"),
-        model,
-        true,
-        harness,
-        Duration::from_secs(1800),
-        None,
-    )?;
+    let evidence = serde_json::to_string(context)?;
+    let response = if harness == Harness::Codex && agent::executable(harness).is_err() {
+        crate::mentions::hosted_json_answer(
+            &evidence,
+            &format!("{STYLE} {INSTRUCTIONS}"),
+            &schema,
+            routing::select(context),
+            repository_private(),
+        )?
+    } else {
+        let directory = tempdir()?;
+        agent::evaluate(
+            &evidence,
+            &schema,
+            Path::new(directory.path()),
+            &format!("{STYLE} {INSTRUCTIONS}"),
+            model,
+            true,
+            harness,
+            Duration::from_secs(1800),
+            None,
+        )?
+    };
     let review: ModelReview = serde_json::from_value(response)?;
     if !review.summary.starts_with("Reviewed.")
         || [&review.observations, &review.blockers, &review.minor]
@@ -67,6 +80,14 @@ pub fn model_review(context: &Value, model: Option<&str>, harness: Harness) -> R
         bail!("model returned an invalid review; nothing was published");
     }
     Ok(review)
+}
+
+fn repository_private() -> Option<bool> {
+    match env::var("RADY_REPOSITORY_PRIVATE").ok()?.as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
 }
 
 #[cfg(test)]

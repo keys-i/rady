@@ -665,12 +665,11 @@ pub fn review_pr(
 ) -> Result<ReviewOutcome> {
     let slug = Regex::new(r"^[a-z0-9-]+$")?;
     if !slug.is_match(bot_slug)
-        || required.is_empty()
         || required
             .iter()
             .any(|name| name.trim().is_empty() || name.starts_with("Rady dependasolve"))
     {
-        bail!("selected App slug and external nonempty required checks are required");
+        bail!("selected App slug and valid external required checks are required");
     }
     let (pull, dependency) = resolve(github, number)?;
     let head = text(&pull, &["head", "sha"])?;

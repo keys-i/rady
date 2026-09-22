@@ -49,6 +49,18 @@ impl GitHub {
         api_with_token(&endpoint, payload, method, true, Some(&self.token), None)
     }
 
+    pub fn raw_optional(&self, path: &str) -> Result<Option<String>> {
+        let endpoint = format!("repos/{}/{}", self.repo, path);
+        let arguments = vec![
+            "api".to_owned(),
+            "--header".to_owned(),
+            "Accept: application/vnd.github.raw+json".to_owned(),
+            endpoint.clone(),
+        ];
+        gh_with_token(&arguments, None, true, Some(&self.token), None)
+            .with_context(|| format!("GitHub API GET {}", safe_endpoint_label(&endpoint)))
+    }
+
     pub fn pages(&self, path: &str, key: Option<&str>) -> Result<Vec<Value>> {
         let mut rows = Vec::new();
         for page in 1..32 {

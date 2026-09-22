@@ -10,22 +10,24 @@ pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
 jq -e --arg repo "$GH_REPO" --argjson number "$PR_NUMBER" '
   .number == $number and
   .state == "open" and .draft == false and
-  .base.repo.full_name == $repo and
+  (.base | type == "object") and
+  (.base.repo | type == "object") and
+  (.base.repo.full_name | type == "string" and . == $repo) and
+  (.head | type == "object") and
+  (.head.repo | type == "object") and
+  (.head.repo.full_name | type == "string" and . == $repo) and
   (.head.sha | type == "string" and test("^[a-f0-9]{40}$"))
 ' <<<"$pull" > /dev/null
 dependency=$(jq -r '.user.login == "dependabot[bot]"' <<<"$pull")
-if [[ "$PRIVATE_REPOSITORY" != true ]]; then
-  jq -e --arg repo "$GH_REPO" '
-    .head.repo.full_name == $repo and
-    (.user.login == "dependabot[bot]" or
-      .author_association == "OWNER" or
-      .author_association == "MEMBER" or
-      .author_association == "COLLABORATOR")
-  ' <<<"$pull" > /dev/null || {
-    echo 'Public repositories run Rady only for same-repository Dependabot or trusted collaborator pull requests' >&2
-    exit 0
-  }
-fi
+jq -e '
+  (.user.login == "dependabot[bot]" or
+    .author_association == "OWNER" or
+    .author_association == "MEMBER" or
+    .author_association == "COLLABORATOR")
+' <<<"$pull" > /dev/null || {
+  echo 'Rady runs only for same-repository Dependabot or trusted collaborator pull requests' >&2
+  exit 0
+}
 {
   echo 'allowed=true'
   echo "dependency=$dependency"

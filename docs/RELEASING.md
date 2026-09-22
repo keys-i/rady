@@ -1,21 +1,20 @@
 # Releasing Rady
 
-Rady uses Release Please. Version state lives in `Cargo.toml`, `Cargo.lock` and `tools/config/release-manifest.json`; they must agree after a release is published.
+Release Please owns future releases. `Cargo.toml`, `Cargo.lock`, and `tools/config/release-manifest.json` must agree.
 
-## Retrospective releases
+The current publishable crate version is `0.5.6`. This document does not claim that `v0.5.6` or the crate has already been released.
 
-GitHub releases from `v0.1.0` through `v0.5.5` were reconstructed from the first commit of each version recorded in the default branch's `Cargo.toml` history. Only versions that actually existed were published; no tag was rewritten. GitHub records their real publication date rather than a fabricated historical date.
+When Release Please creates a GitHub release from the merged release pull request, the release workflow checks out that exact tag and runs `cargo publish --locked`. It needs `CARGO_REGISTRY_TOKEN` as a secret in `keys-i/rady`. Crates.io publishing is therefore tied to the corresponding future GitHub release, not performed by a local backfill script.
 
-The backfill covers GitHub tags and releases only. It does not retroactively publish crates.io packages or historical Homebrew formulae, because those channels are immutable and require separately verified source artifacts. The current Homebrew formula targets the current release tag.
+## Historical releases
 
-## Current and future releases
+GitHub releases from `v0.1.0` through `v0.5.5` were reconstructed from the first default-branch commit carrying each recorded version. They retain their real publication dates; no tags were rewritten.
 
-`tools/config/release-manifest.json` records `0.5.5` as the released baseline. Future conventional changes flow through the Release Please pull request and release workflow. Do not manually edit the manifest for ordinary releases.
+Historical crates.io releases cannot be fabricated or backfilled: crates.io versions are immutable and need the verified source artifact for that version. The same restriction applies to historical package-manager artifacts.
 
-Before merging a release pull request, verify:
+## Before merging a release PR
 
-- `Cargo.toml` and the `rady` package entry in `Cargo.lock` have the same version
-- the release manifest and changelog match the intended release
-- formatting, Clippy, all tests and the release build pass with `--locked`
-- the Homebrew formula points to the intended immutable tag or artifact
-- installation documentation names the published version
+- Check `Cargo.toml`, the `rady` entry in `Cargo.lock`, and the release manifest agree
+- Run formatting, Clippy, all tests, and the locked release build
+- Confirm release notes and installation documentation name the intended version
+- Confirm `CARGO_REGISTRY_TOKEN` is available only to the central release workflow
