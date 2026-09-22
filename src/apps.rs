@@ -480,6 +480,8 @@ mod tests {
 
     #[test]
     fn registration_routes_serve_fragmented_page_and_duck() -> Result<()> {
+        let state = random_token(32)?;
+        let nonce = random_token(32)?;
         for (target, content_type, expected_body) in [
             ("/start", "text/html; charset=utf-8", b"Ready".as_slice()),
             (DUCK_ROUTE, "image/png", RADY_DUCK_PNG),
@@ -505,8 +507,8 @@ mod tests {
                 &host,
                 "/start",
                 "/callback",
-                "state",
-                "nonce",
+                &state,
+                &nonce,
                 "Ready",
                 Identity::Rady,
             )?;
@@ -529,9 +531,9 @@ mod tests {
     }
 
     #[test]
-    fn callback_matrix_covers_valid_state_path_encoding_and_bad_codes() {
+    fn callback_matrix_covers_valid_state_path_encoding_and_bad_codes() -> Result<()> {
         let route = "/callback/r";
-        let state = "state_value_1234567890";
+        let state = random_token(32)?;
         for (path, valid) in [
             (
                 format!("{route}?state={state}&code={}", "a".repeat(20)),
@@ -547,8 +549,9 @@ mod tests {
             ),
             (format!("{route}?state={state}&code=short"), false),
         ] {
-            assert_eq!(callback_code(&path, route, state).is_ok(), valid, "{path}");
+            assert_eq!(callback_code(&path, route, &state).is_ok(), valid, "{path}");
         }
+        Ok(())
     }
 
     #[test]
@@ -579,8 +582,13 @@ mod tests {
     }
 
     #[test]
-    fn setup_page_uses_the_animated_rady_duck() {
-        let page = setup_page("Ready", "<p>Safe content</p>", "nonce", Identity::Rady);
+    fn setup_page_uses_the_animated_rady_duck() -> Result<()> {
+        let page = setup_page(
+            "Ready",
+            "<p>Safe content</p>",
+            &random_token(32)?,
+            Identity::Rady,
+        );
         assert!(page.contains("class=\"duck\""));
         assert!(page.contains("alt=\"Rady duck\""));
         assert!(page.contains("src=\"/rady-duck.png\""));
@@ -593,5 +601,6 @@ mod tests {
         assert!(page.contains("aria-labelledby=\"setup-title\""));
         assert!(!page.contains("base64"));
         assert!(RADY_DUCK_PNG.starts_with(b"\x89PNG\r\n\x1a\n"));
+        Ok(())
     }
 }
