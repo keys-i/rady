@@ -1,8 +1,8 @@
 # Releasing Rady
 
-`Cargo.toml` and the `rady` entry in `Cargo.lock` name the next package version: `0.5.7`. `tools/config/release-manifest.json` records the last actual release: `0.5.5`. They intentionally differ until publication.
+`Cargo.toml` and the `rady` entry in `Cargo.lock` name the next package version: `0.5.8`. `tools/config/release-manifest.json` records the last actual release: `0.5.7`. They intentionally differ until publication.
 
-`0.5.7` is prepared, not released. Release Please opens the release pull request; after it is merged, the release workflow checks out its exact tag and runs `cargo publish --locked`. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow.
+`0.5.8` is prepared, not released. Release Please opens the release pull request; after it is merged, the release workflow checks out its exact tag and runs `cargo publish --locked`. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow.
 
 ## Historical releases
 

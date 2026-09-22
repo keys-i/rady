@@ -29,7 +29,7 @@ brew install keys-i/rady/rady
 After it is published, install the current crate with:
 
 ```sh
-cargo install rady --version 0.5.7 --locked
+cargo install rady --version 0.5.8 --locked
 ```
 
 Build a checkout with Rust 1.85+:
