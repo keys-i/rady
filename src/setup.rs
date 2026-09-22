@@ -1021,6 +1021,8 @@ mod tests {
         assert!(orchestrator.contains("permission-issues: read"));
         assert!(!orchestrator.contains("runs-on: self-hosted"));
         assert!(!solver.contains("runs-on: self-hosted"));
+        assert!(!orchestrator.contains("actions/cache@"));
+        assert!(!solver.contains("actions/cache@"));
         assert!(solver.contains("repo:"));
         assert!(solver.contains("repo-owner:"));
         assert!(solver.contains("repo-name:"));

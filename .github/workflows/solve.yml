@@ -195,19 +195,6 @@ jobs:
           repository: ${{ steps.source.outputs.repository }}
           ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
-      - name: Identify Rust toolchain
-        id: toolchain
-        shell: bash
-        run: echo "version=$(rustc -V | tr ' ' '-')" >> "$GITHUB_OUTPUT"
-      - name: Restore Rady build cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: rady-${{ runner.os }}-${{ steps.toolchain.outputs.version }}-${{ steps.source.outputs.sha }}-${{ hashFiles('Cargo.lock') }}
       - name: Build the trusted solver
         run: cargo build --release --locked --bin rady
       - name: Resolve PR author and commit

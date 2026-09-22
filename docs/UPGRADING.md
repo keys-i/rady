@@ -1,4 +1,4 @@
-# Upgrading to Rady 0.5.6
+# Upgrading to Rady 0.5.7
 
 Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
@@ -17,7 +17,7 @@ JSON specifications, retained evidence, harness environment variables, and `--ou
 
 ## Central GitHub setup
 
-Rady 0.5.6 uses the public **radyybot** App and one central Actions installation in `keys-i/rady`. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys live there only. They must not be added to target repositories.
+Rady 0.5.7 uses the public **radyybot** App and one central Actions installation in `keys-i/rady`. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys live there only. They must not be added to target repositories.
 
 For a `keys-i` repository, install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then run:
 
