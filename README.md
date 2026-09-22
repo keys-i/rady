@@ -7,7 +7,7 @@ One command provides two capabilities:
 - `rady code` turns a request into a bounded, checked local change
 - `rady dependasolve` reviews dependency pull requests from their real diff and CI evidence
 
-The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's expressive duck identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter for code and Dependasolve. Guarded `@radyybot` replies use a local model route with Gemini and Cerebras fallbacks from a GitHub-hosted runner.
+The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's expressive duck identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter for code and Dependasolve. Guarded `@radyybot` replies prefer an authenticated local Codex when available and otherwise use a direct Gemini-first route with Cerebras fallbacks.
 
 ## Install
 
@@ -161,13 +161,13 @@ On an issue or pull request, repository owners, members, and collaborators can w
 
 ### Hosted `@radyybot` replies
 
-Mention replies use a local, no-extra-call route. On public repositories, simple questions start with free Gemini 3.5 Flash-Lite and fall back to Cerebras `gpt-oss-120b`; balanced questions start with Cerebras `zai-glm-4.7` and fall back to GPT-OSS; deep questions start with Gemini 3.8 Flash, then GLM, then GPT-OSS. Private and unknown repositories skip both Gemini models by default because Gemini free-tier content may improve Google products. Gemini quota or capacity responses follow the next fallback. Set these at repository or organisation scope:
+The GitHub responder calls providers directly and never installs or signs in to Codex. On public repositories, simple questions start with free Gemini 3.5 Flash-Lite, then Cerebras `gpt-oss-120b`; balanced and deep questions start with Gemini 3.8 Flash, then Qwen 3.8 27B, then GPT-OSS. When an xAI key is configured, paid Grok 4.7 is the final fallback after the free route is exhausted. Private and unknown repositories skip Gemini and Grok by default. Gemini quota or capacity responses follow the next fallback. The workflow uses one runner job and reuses a source-pinned Cargo build cache. Set these at repository or organisation scope:
 
 | GitHub setting | Name |
 | --- | --- |
-| Actions secret | `RADY_GEMINI_API_KEY`, `RADY_CEREBRAS_API_KEY` |
-| Actions variable | `RADY_GEMINI_PRIVATE_OK=true` to explicitly allow Gemini for private repositories |
+| Actions secret | `RADY_GEMINI_API_KEY`, `RADY_CEREBRAS_API_KEY`, optional `RADY_XAI_API_KEY` |
+| Actions variable | `RADY_GEMINI_PRIVATE_OK=true` or `RADY_XAI_PRIVATE_OK=true` to explicitly allow that provider for private repositories |
 
-Gemini Free quotas vary by Google project; view the current allowance in AI Studio. Cerebras's free limits are organisation-specific and can change or be reduced temporarily; its Free tier has no automatic billing. Cerebras says API inputs and outputs are not retained or used for training, but the mention prompt and its bounded issue or pull-request evidence still cross the Gemini or Cerebras boundary for inference. The router is local rather than a separate third-party routing API, so it adds neither another credential nor another data recipient. This does not replace the trusted native harness required for `rady code`, Dependasolve reviews, or conflict repair.
+Gemini Free quotas vary by Google project; view the current allowance in AI Studio. Cerebras's free limits are organisation-specific and can change or be reduced temporarily; its Free tier has no automatic billing. The xAI API is usage-priced, does not train on API input or output without permission, and normally retains requests and responses for 30 days unless the xAI team has Zero Data Retention enabled. Provider prompts contain bounded issue or pull-request evidence, so enable only providers whose data handling is acceptable for the repository. The router is local rather than a separate third-party routing API. This does not replace the trusted native harness required for `rady code`, Dependasolve reviews, or conflict repair.
 
 [Upgrading](docs/UPGRADING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)
