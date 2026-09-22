@@ -1,23 +1,31 @@
 # Security policy
 
-## Reporting a vulnerability
+## Report privately
 
-Use this repository's **Security** tab and select **Report a vulnerability**. Do not open a public issue for a suspected vulnerability.
+Use this repository's **Security** tab → **Report a vulnerability**. Do not open a public issue. Include a small reproduction, affected version or commit, impact, and a safe mitigation idea. Remove credentials, keys, tokens, personal data, and production URLs or data. We coordinate in GitHub's private advisory discussion.
 
-Include a minimal reproduction, affected version or commit, impact, and safe mitigation ideas. Redact credentials, private keys, tokens, personal data, and production URLs or data. We will use GitHub's private advisory discussion for coordinated disclosure.
+## Support
 
-## Supported versions
+`main` is the supported line. Fixes land there; backports and response times are not promised.
 
-The latest `main` branch is supported. Fixes are made there; no backports or response-time commitments are promised.
+## Where Rady may run
 
-## Rady agent runs
+Use authenticated agent CLIs only on machines and runners you control. Private repositories may review every open, non-draft pull request. Public repositories first pass GitHub-hosted preflight and then admit only same-repository Dependabot updates or same-repository pull requests from an `OWNER`, `MEMBER`, or `COLLABORATOR`. Public forks and custom adapters are rejected; public reviews require the bounded Codex or Claude harness.
 
-Use authenticated agent CLIs only on machines and runners you control. Private repositories may review every open, non-draft pull request. Public repositories reach the trusted self-hosted runner only after a GitHub-hosted preflight verifies an open, same-repository Dependabot pull request or same-repository pull request from an `OWNER`, `MEMBER`, or `COLLABORATOR`. Public reviews require the bounded Codex or Claude harness; public forks and custom command adapters are rejected. `RADY_MODEL_CHOICES` is a comma-separated native-harness model list ordered least to most capable; `RADY_MODEL` pins one model and overrides the task or review tier selection. Broad coding work is split into at most eight scoped tasks and executed serially so workers cannot race on one worktree. A failed check or review may escalate to the next configured model within the attempt limit; unchanged repairs stop without rerunning checks. Do not place a subscription credential, model API key, or harness login in a public workflow.
+`RADY_MODEL_CHOICES` lists native-harness models from least to most capable. `RADY_MODEL` pins one and overrides tier selection. Broad work is split into at most eight serial, scoped tasks. Failed evidence may move to the next model within the attempt limit; unchanged repairs stop. Never put subscription credentials, model API keys, or harness logins in a public workflow.
 
-Issue and pull-request mentions are guarded: only an `OWNER`, `MEMBER`, or `COLLABORATOR` may invoke `@radyybot <prompt>`. The response is read-only evidence; bare `@radyybot` gives concise usage, and no comment can edit code or publish a change. Treat comment content as untrusted input regardless of author association. An authenticated local Codex is preferred when detected; otherwise a local router selects Gemini 3.5 Flash-Lite then GPT-OSS for simple public requests, and Gemini 3.8 Flash then Qwen 3.8 27B then GPT-OSS for balanced and deep requests. Paid Grok 4.7 is an optional final fallback when `RADY_XAI_API_KEY` is configured. Store provider keys only as GitHub Actions secrets at repository or organisation scope; they are removed from native-agent child environments and are never cached. Private and unknown repositories skip Gemini and Grok unless `RADY_GEMINI_PRIVATE_OK=true` or `RADY_XAI_PRIVATE_OK=true` explicitly permits that provider. Gemini's free tier may use content to improve Google products. xAI says API input and output are not used for training without permission, but normally retains them for 30 days unless Zero Data Retention is enabled for the xAI team. The router itself has no remote API or credential, but bounded comment and issue or pull-request evidence crosses the selected provider boundary. Do not enable the responder where external transmission is unacceptable.
+## Mentions and hosted models
 
-Automatic conflict repair is limited to approved, same-repository Dependabot patch and minor updates with passing selected CI evidence, 95–100% compatibility, no maintainer changes, a confirmed dirty merge state, and at most 20 approved dependency files. Rady binds the original head and base snapshots, stops publication if the base advances, opens a separate replacement PR, and never writes to the Dependabot branch. The short-lived App token is removed from agent and check environments and supplied only to the authenticated Git fetch, push and GitHub API children.
+Only an `OWNER`, `MEMBER`, or `COLLABORATOR` can invoke `@radyybot <prompt>`. Replies are read-only evidence; bare `@radyybot` shows usage, and no comment can edit code or publish a change. Treat every comment as untrusted input.
 
-Rady blocks known credential files and private-key material in a proposed change, uses an isolated worktree, and checks that validated files do not change before publication. These checks are not a complete sandbox for an arbitrary custom adapter. Review `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND` as privileged local programs, keep their credentials outside repositories, and use least-privilege GitHub access.
+On a machine with authenticated Codex, Rady uses it. GitHub-hosted mentions instead route simple public requests through Gemini 3.5 Flash-Lite then GPT-OSS, and balanced or deep work through Gemini 3.8 Flash, Qwen 3.8 27B, then GPT-OSS. Paid Grok 4.7 is an optional final fallback with `RADY_XAI_API_KEY`. Store provider keys only as repository- or organisation-scoped GitHub Actions secrets. They are removed from native-agent children and never cached.
 
-Human evidence reports are generated locally with raw HTML escaped and unsafe link schemes neutralised. They contain no scripts, remote fonts or network resources. Treat retained `run.json`, `run.html`, logs and worktrees as potentially sensitive because they can contain source paths, diffs and command output.
+Private and unknown repositories skip Gemini and Grok unless `RADY_GEMINI_PRIVATE_OK=true` or `RADY_XAI_PRIVATE_OK=true` explicitly allows them. Gemini's free tier may use content to improve Google products. xAI says API input and output are not used for training without permission, but normally retains them for 30 days unless the xAI team enables Zero Data Retention. Rady selects the provider locally; that provider receives bounded issue, pull-request, or comment evidence. Do not enable the responder when that transfer is unacceptable.
+
+## Change and delivery boundaries
+
+Automatic conflict repair is limited to approved same-repository Dependabot patch or minor updates: selected CI must pass, compatibility must be 95–100%, no maintainer files may change, the original pull request must be genuinely conflicted, and at most 20 approved dependency files may be touched. Rady binds the original head and base, stops if the base moves, opens a separate replacement PR, and never writes to the Dependabot branch.
+
+Rady blocks known credential and private-key files, works in an isolated worktree, and confirms validated files remain unchanged before publication. App tokens are short-lived, stripped from agent and check environments, and given only to authenticated Git fetch, push, and GitHub API children. `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND` are privileged local programs, not sandboxes: review them, keep credentials out of repositories, and use least-privilege GitHub access.
+
+Local HTML evidence escapes raw HTML, neutralises unsafe links, and uses no scripts, remote fonts, or network resources. Treat retained `run.json`, `run.html`, logs, and worktrees as sensitive: they can contain source paths, diffs, and command output.
