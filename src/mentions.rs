@@ -250,20 +250,7 @@ fn provider_prompt(evidence: &str) -> Result<String> {
 }
 
 fn gemini_answer(prompt: &str, model: &str, key: &str) -> Result<String> {
-    let body = json!({
-        "systemInstruction": {"parts": [{"text": format!("{STYLE} {INSTRUCTIONS} {RESPONSE_SCHEMA}")}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": 1_600,
-            "responseMimeType": "application/json",
-            "responseSchema": {
-                "type": "object",
-                "additionalProperties": false,
-                "properties": {"answer": {"type": "string"}},
-                "required": ["answer"]
-            }
-        },
-    });
+    let body = gemini_request(prompt);
     let output = provider_request(
         &format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
         "x-goog-api-key",
@@ -286,6 +273,23 @@ fn gemini_answer(prompt: &str, model: &str, key: &str) -> Result<String> {
         })
         .ok_or_else(|| anyhow!("Gemini returned an invalid response"))?;
     answer_from_json(&text)
+}
+
+fn gemini_request(prompt: &str) -> Value {
+    json!({
+        "systemInstruction": {"parts": [{"text": format!("{STYLE} {INSTRUCTIONS} {RESPONSE_SCHEMA}")}]},
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "maxOutputTokens": 1_600,
+            "responseMimeType": "application/json",
+            "responseJsonSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"]
+            }
+        },
+    })
 }
 
 fn cerebras_answer(prompt: &str, model: &str, key: &str) -> Result<String> {
@@ -436,6 +440,7 @@ fn provider_response(code: i32, output: &str) -> Result<String> {
         match code {
             6 => bail!("request could not resolve the provider"),
             7 => bail!("request could not connect to the provider"),
+            22 if status == 402 => bail!("provider reported payment required (HTTP 402)"),
             22 if status != 0 => bail!("request was rejected (HTTP {status})"),
             28 => bail!("request timed out"),
             63 => bail!("response exceeded {MAX_PROVIDER_RESPONSE_BYTES} bytes"),
@@ -635,6 +640,11 @@ mod tests {
             assert_eq!(external_provider_permitted(private, opted_in), allowed);
         }
         assert_eq!(answer_from_json(r#"{"answer":"ready"}"#).unwrap(), "ready");
+        let gemini = gemini_request("evidence");
+        let config = &gemini["generationConfig"];
+        assert!(config["responseSchema"].is_null());
+        assert_eq!(config["responseJsonSchema"]["type"], "object");
+        assert_eq!(config["responseJsonSchema"]["additionalProperties"], false);
         assert_eq!(
             xai_response_text(
                 r#"{"output":[{"type":"reasoning"},{"type":"message","content":[{"type":"output_text","text":"{\"answer\":\"ready\"}"}]}]}"#
@@ -655,6 +665,11 @@ mod tests {
                 22,
                 "provider body must stay hidden\nRADY_HTTP_STATUS:401",
                 Some("request was rejected (HTTP 401)"),
+            ),
+            (
+                22,
+                "provider body must stay hidden\nRADY_HTTP_STATUS:402",
+                Some("provider reported payment required (HTTP 402)"),
             ),
             (28, "\nRADY_HTTP_STATUS:000", Some("request timed out")),
         ] {

@@ -28,7 +28,7 @@ on:
       gemini-api-key:
         required: true
       cerebras-api-key:
-        required: true
+        required: false
       xai-api-key:
         required: false
 
