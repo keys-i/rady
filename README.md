@@ -1,76 +1,59 @@
 # Rady
 
-Rady checks agent-made code changes before you apply or publish them. It also reviews Dependabot pull requests using the actual diff and current CI evidence.
+Rady is a careful duck for code changes and dependency updates. It keeps the person in charge: make a bounded change, see the evidence, then decide what to apply or merge.
 
-One command provides two capabilities:
+- `rady code` turns a request into an isolated, checked change
+- `rady dependasolve` reviews Dependabot pull requests from their diff and completed CI evidence
 
-- `rady code` turns a request into a bounded, checked local change
-- `rady dependasolve` reviews dependency pull requests from their real diff and CI evidence
-
-The default interface is for people who code: compact terminal colour, readable Markdown, honest stage progress, and a responsive evidence report. Rady's expressive duck identity and restrained retro-arcade details mark state without covering the work. Automation can select `--output json`; successful `code` and `dependasolve` documents use `{"schema":1,"status":"ok","kind":"…","result":…}` on standard output, while argument and runtime failures use bounded schema-versioned JSON on standard error and retain a nonzero exit. Rady uses an existing Codex or Claude Code login, or an operator-owned command adapter for code and Dependasolve. Guarded `@radyybot` replies prefer an authenticated local Codex when available and otherwise use a direct Gemini-first route with Cerebras fallbacks.
+The terminal is compact and direct. The retained HTML report is the readable record: safe Markdown, LaTeX-to-MathML, responsive type, themes, and a restrained retro duck—never a wall of agent theatre. Use `--output json` when another tool is driving Rady.
 
 ## Install
 
-Rady supports macOS and Linux. Homebrew installs the pinned source from this repository and provides both `rady` and the `dependasolver` compatibility command:
+Once `v0.5.5` is published, install Rady on macOS or Linux from the project tap:
 
 ```sh
 brew tap keys-i/rady https://github.com/keys-i/rady
 brew install keys-i/rady/rady
 ```
 
-Cargo can install the same immutable revision directly:
+Or install the tagged source with Cargo:
 
 ```sh
-cargo install --git https://github.com/keys-i/rady \
-  --rev 482726baf2c19a02737fa29ec6b94ad068608f3b --locked rady
+cargo install --git https://github.com/keys-i/rady --tag v0.5.5 --locked rady
 ```
 
-Rady requires an authenticated [Codex CLI](https://developers.openai.com/codex/cli/) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code), unless you configure a custom local adapter. Repository setup and pull-request review also require the GitHub CLI.
-
-## Build
-
-Rady requires Rust 1.85 or newer.
+Rady needs Rust 1.85+ to build from source. Coding runs need an authenticated [Codex CLI](https://developers.openai.com/codex/cli/) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code); GitHub setup and pull-request review need the GitHub CLI.
 
 ```sh
 cargo build --release --locked
 target/release/rady --help
 ```
 
-The compatibility executable `target/release/dependasolver` opens `rady dependasolve`.
+`dependasolver` remains a compatibility command for `rady dependasolve`.
 
-## Checked coding changes
+## Make a checked change
 
-Give Rady a request. In a single-language repository it selects the conventional test command; `--check test` requests the same inference explicitly, while a complete command remains available when the repository is unusual:
+Start with the job, not a ceremony:
 
 ```sh
 rady code "Reject blank user names"
 ```
 
-Rady creates an isolated worktree from the checked-out revision, asks the selected native harness to plan and implement the change, enforces scope and size limits, runs checks and optional benchmarks, and obtains a separate structured review. It retains the workspace and evidence whether the run succeeds or stops. It publishes only when `--pr`, an explicit repository, and fixed acceptance checks are present.
+Rady creates an isolated worktree, plans and makes a bounded change, checks scope and size, runs the selected checks, and gets a separate read-only review. It retains the workspace and evidence whether the run succeeds or stops. A pull request requires `--pr`, an explicit repository, and fixed acceptance checks.
 
-Use a complete JSON specification to freeze the acceptance contract and skip model planning:
+For exact, repeatable work, supply a JSON specification:
 
 ```json
 {
   "task": "Reject blank user names",
-  "acceptance": [
-    "Blank names return a validation error",
-    "Valid names keep their existing behaviour"
-  ],
+  "acceptance": ["Blank names return a validation error"],
   "scope": ["src/validation.rs", "tests/validation.rs"],
   "checks": ["cargo test"],
-  "acceptance_checks": [
-    {
-      "criterion": 0,
-      "command": "cargo test blank_name",
-      "files": ["tests/validation.rs"]
-    },
-    {
-      "criterion": 1,
-      "command": "cargo test valid_name",
-      "files": ["tests/validation.rs"]
-    }
-  ]
+  "acceptance_checks": [{
+    "criterion": 0,
+    "command": "cargo test blank_name",
+    "files": ["tests/validation.rs"]
+  }]
 }
 ```
 
@@ -78,31 +61,9 @@ Use a complete JSON specification to freeze the acceptance contract and skip mod
 rady code --spec spec.json --directory /path/to/project
 ```
 
-Acceptance files must already exist, be regular files, and remain byte-for-byte unchanged. Each criterion needs a fixed check with frozen files, an exact `expected_output`, or both. Commands are parsed into argument lists and run without a shell.
+Acceptance files must already exist and remain unchanged. Rady parses commands into arguments rather than running a shell. See [`docs/UPGRADING.md`](docs/UPGRADING.md) for command changes and the built-in `--help` for every option.
 
-For performance work, add `--benchmark`. Rady records one warm-up and seven samples by default, compares medians and relative median absolute deviation, and blocks noisy or slower results. A benchmark can emit a positive JSON metric such as `{"peak_memory_mb":42.5}` and select it with `--benchmark-metric peak_memory_mb`.
-
-```sh
-rady code "Reduce parser allocations" \
-  --check "cargo test" \
-  --benchmark "target/release/parser fixture.json" \
-  --max-regression 3
-```
-
-Broad requests become at most eight small, dependency-ordered tasks. With `RADY_MODEL_CHOICES` ordered from cheapest to strongest, the planner assigns the least capable sufficient model to each task. Rady keeps writers serial, checks scope after every task, runs fixed checks and an independent review, and retries only from new failure evidence. This is the default worker network; it avoids parallel edits to one worktree.
-
-One native harness agent per task is the efficient default. `--agents 2` through `8` lets that harness fan out bounded research while Rady keeps its planned implementation tasks serial. `--max-tokens` is a between-call budget based on provider-reported usage and requires one native agent because nested usage cannot be verified; unknown usage fails closed.
-
-## Human output
-
-`--theme auto` follows the browser colour profile and uses the terminal's own adaptive cyan, so terminal palettes retain control of light/dark contrast. The browser labels `dawn`, `moss`, `tide`, and `dusk` as Paper Tape, Phosphor, Vector, and Midnight; `plain` remains available for unstyled terminal output. Colour is disabled automatically for redirected terminal output and when `NO_COLOR` is set.
-
-Every coding run writes:
-
-- `run.json` for agents and automation
-- `run.html` for people, with responsive type, safe Markdown, LaTeX rendered to MathML, accessible theme controls, Rady's expressive duck, restrained terminal detail, and reduced-motion support
-
-Runs stay available after completion or interruption. Use their identifier to inspect evidence, stop active work, restart from a retained patch, or apply a verified result only to a clean directory:
+Each run leaves a durable record you can inspect, stop, resume, or apply to a clean directory:
 
 ```sh
 rady runs
@@ -112,62 +73,47 @@ rady resume RUN_ID
 rady apply RUN_ID --directory /path/to/project
 ```
 
-`apply` never stages, commits, or publishes changes. It verifies the retained patch and target revision before modifying the directory.
+`apply` verifies the retained patch and target revision; it never stages, commits, or publishes your work.
 
-Markdown headings, **bold**, *italics*, `<u>underline</u>`, `<mark>highlight</mark>`, tables, task lists, footnotes, code, and inline or display mathematics render locally. Other raw HTML is escaped, links are protocol-checked, and remote images become readable text. The report is self-contained: no JavaScript, web font, CDN, or network request. Rady's bundled duck settles into view, shifts occasionally while idle, and responds to nearby controls using only short transform and opacity motion; reduced-motion preferences disable those movements.
+## Review dependency pull requests
 
-## Harnesses
-
-Codex is the default. Claude Code and a custom local command are also supported.
+Preview setup, then apply it when it looks right:
 
 ```sh
-rady agent doctor --harness codex
-rady agent run --harness codex -- resume
+rady dependasolve --repo OWNER/REPO --check test --check audit
+rady dependasolve --repo OWNER/REPO --check test --check audit --apply
 ```
 
-For a custom adapter, set `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND`. Input arrives on standard input. Review output must match the requested JSON schema. A budgeted adapter result wraps its value and usage:
+Rady pins its source to the current immutable default-branch commit. Re-running setup replaces only its generated caller workflow (use `--no-overwrite` to refuse); existing Dependabot configuration and branch protection stay untouched. `--check` names CI evidence to read—it does not run that command or add a required status check.
 
-```json
-{"result": {}, "usage": {"input_tokens": 100, "output_tokens": 20}}
+Dependasolve reviews eligible open pull requests oldest first when triggered manually or on schedule, including existing Dependabot pull requests when there are no new ones. It approves only low-risk updates with the selected evidence complete and passing. Missing evidence holds the change. For an eligible conflicted patch or minor Dependabot update, it can create a separately reviewed replacement pull request; it never force-pushes, closes the original, or merges for you.
+
+Private repositories use a trusted self-hosted runner. Public repositories admit only same-repository Dependabot updates and trusted same-repository collaborator pull requests after GitHub-hosted verification. See the generated workflow and [`docs/SECURITY.md`](docs/SECURITY.md) for the full trust model.
+
+## Ask Rady on GitHub
+
+Owners, members, and collaborators can post a guarded read-only question on an issue or pull request:
+
+```text
+@radyybot What changed here, and what should I check?
 ```
 
-Custom adapters are privileged local programs, not a sandbox. Rady strips common model and GitHub token variables from worker environments, bounds time and output, and terminates the child process group on overflow or timeout.
+`@radyybot` alone gives concise usage. Mentions never edit code, create a pull request, or publish a change. Untrusted commenters cannot start an agent run.
 
-Set `RADY_MODEL_CHOICES` to a comma-separated native-harness model list from least to most capable. `rady code` chooses a tier for each planner or worker task, escalates only after failing evidence, and stops after the configured attempt limit or a no-progress repair. Pull-request and Dependasolve reviews choose a tier from their bounded evidence. Set `RADY_MODEL` to pin one model and override that selection.
+The hosted responder defaults to Gemini-first, with configured fallbacks. It does not install or sign in to Codex on GitHub Actions. Configure these repository or organisation settings:
 
-## Dependabot pull-request review
-
-Preview repository setup before applying it:
-
-```sh
-rady dependasolve \
-  --repo OWNER/REPO \
-  --check test \
-  --check audit \
-  --check dependency-review
-```
-
-Review the preview, then add `--apply`. Setup resolves the current default-branch commit of `keys-i/rady` and pins that immutable SHA in the workflow. Rerunning setup replaces its generated caller workflow by default; pass `--no-overwrite` to refuse changes, while an existing Dependabot configuration is always left untouched. Pass `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` only to override that source explicitly. Rady reuses a complete `RADY_APP_*` credential set by default and accepts complete legacy `DEPENDASOLVER_APP_*` credentials as a fallback; `--new-app` explicitly starts a new registration. Setup requires GitHub CLI authentication and repository administration access.
-
-Setup never changes branch protection. Each `--check` tells Rady which completed CI evidence to read; it does not execute that name or create a protected status check. `--checks` remains a compatibility alias. Reviews run on a trusted self-hosted runner. Private repositories review every open, non-draft pull request. Public repositories first verify the pull request on a GitHub-hosted runner and admit only same-repository Dependabot updates or same-repository pull requests from an owner, member, or collaborator, using the bounded Codex or Claude harness. Public forks and custom command adapters are rejected.
-
-Dependasolve approves only low-risk, complete reviews with every selected and protected check passing. It suspends stale Dependabot auto-merge before starting a new review. Auto-merge is restored only when existing branch protection is strict, administrator-enforced, and has at least one required check, after verified patch/minor metadata, no maintainer changes, and 95–100% compatibility. Otherwise Rady posts its evidence and leaves the merge decision with you. Missing evidence holds the change; model confidence never replaces a gate.
-
-Setup discovers local GitHub Actions workflows; their completion and third-party check runs trigger a fresh review of the exact pull-request head. Scheduled and manual runs take a bounded oldest-first pass over every eligible open pull request: all non-drafts in private repositories, or trusted same-repository Dependabot, owner, member, and collaborator pull requests in public repositories. Legacy commit-status checks remain gated but need a manual workflow dispatch after they settle.
-
-For a genuinely conflicted same-repository Dependabot patch or minor update, Rady can ask the native agent harness to recreate that bounded dependency change from the current base. This path requires an approved low-risk diff and selected CI evidence, 95–100% compatibility, no maintainer changes, and only approved manifest, lockfile or workflow paths. The original head and base are pinned and rechecked, and publication stops if the base advances during the run. Rady runs the inferred project test and fixed acceptance check without exposing the App token to either process, then opens a separate replacement PR and links it from the original. It never pushes to or closes the Dependabot PR, and the replacement remains a normal human review and merge decision.
-
-On an issue or pull request, repository owners, members, and collaborators can write `@radyybot <prompt>` for a guarded, read-only evidence response. `@radyybot` by itself gives concise usage. Comment requests never edit code, create a change, or publish anything. Mentions from everyone else are treated as untrusted input and cannot start an agent run.
-
-### Hosted `@radyybot` replies
-
-The GitHub responder calls providers directly and never installs or signs in to Codex. On public repositories, simple questions start with free Gemini 3.5 Flash-Lite, then Cerebras `gpt-oss-120b`; balanced and deep questions start with Gemini 3.8 Flash, then Qwen 3.8 27B, then GPT-OSS. Cerebras and paid Grok 4.7 are optional fallbacks when their keys have billing access. Private and unknown repositories skip Gemini and Grok by default. Gemini quota or capacity responses follow the next configured fallback. The workflow uses one runner job and reuses a source-pinned Cargo build cache. Set these at repository or organisation scope:
-
-| GitHub setting | Name |
+| Setting | Name |
 | --- | --- |
-| Actions secret | `RADY_GEMINI_API_KEY`, optional `RADY_CEREBRAS_API_KEY`, optional `RADY_XAI_API_KEY` |
-| Actions variable | `RADY_GEMINI_PRIVATE_OK=true` or `RADY_XAI_PRIVATE_OK=true` to explicitly allow that provider for private repositories |
+| Actions secret | `RADY_GEMINI_API_KEY` |
+| Optional Actions secret | `RADY_CEREBRAS_API_KEY`, `RADY_XAI_API_KEY` |
+| Actions variable | `RADY_GEMINI_PRIVATE_OK=true`, `RADY_XAI_PRIVATE_OK=true` to explicitly allow the provider for private repositories |
 
-Gemini Free quotas vary by Google project; view the current allowance in AI Studio. Cerebras offers expiring trial credits after payment-method verification, not a permanent free API tier; omit its secret unless the organisation has active credits. The xAI API is usage-priced, does not train on API input or output without permission, and normally retains requests and responses for 30 days unless the xAI team has Zero Data Retention enabled. Provider prompts contain bounded issue or pull-request evidence, so enable only providers whose data handling is acceptable for the repository. The router is local rather than a separate third-party routing API. This does not replace the trusted native harness required for `rady code`, Dependasolve reviews, or conflict repair.
+Provider prompts contain bounded issue or pull-request evidence. Enable only providers whose data handling and billing are appropriate for that repository; quota and pricing change, so check the provider directly. Hosted replies do not replace the trusted native harness used for code changes, dependency review, or conflict repair.
 
-[Upgrading](docs/UPGRADING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)
+## Trust, output, and themes
+
+Rady keeps generated work distinct from verified work. It bounds subprocess time and output, strips common model and GitHub tokens from workers, and fails closed when required evidence is missing. Custom adapters are privileged local programs, not sandboxes.
+
+Human reports are self-contained: no script, CDN, remote font, or raw untrusted HTML. Markdown and mathematics remain selectable text; unsafe links and raw HTML are rejected or escaped. `--theme auto` respects the terminal or system context, `NO_COLOR` and redirected output remain plain, and reduced-motion preferences remove decorative movement.
+
+[Upgrading](docs/UPGRADING.md) · [Releasing](docs/RELEASING.md) · [Security](docs/SECURITY.md) · [Contributing](docs/CONTRIBUTING.md) · [MIT](LICENSE)

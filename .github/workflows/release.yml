@@ -27,7 +27,23 @@ jobs:
           permission-contents: write
           permission-issues: write
           permission-pull-requests: write
+      - name: Verify the release baseline
+        id: baseline
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          if baseline_error=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.5.5" --silent 2>&1); then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$baseline_error" == *"HTTP 404"* ]]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Release backfill required::Publish the v0.5.5 baseline before Release Please"
+          else
+            printf '%s\n' "$baseline_error" >&2
+            exit 1
+          fi
       - name: Prepare release PR or publish merged release
+        if: steps.baseline.outputs.ready == 'true'
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}

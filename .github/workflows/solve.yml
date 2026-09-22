@@ -63,6 +63,26 @@ jobs:
       head: ${{ steps.pull.outputs.head }}
       number: ${{ steps.pull.outputs.number }}
     steps:
+      - name: Validate trusted solver source
+        id: source
+        shell: bash
+        env:
+          SOLVER_REF: ${{ inputs.solver-ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOLVER_REF" =~ ^keys-i/rady@([a-f0-9]{40})$ ]]; then
+            echo 'solver-ref must be keys-i/rady@40_LOWERCASE_COMMIT_SHA' >&2
+            exit 1
+          fi
+          echo "sha=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+      - name: Check out trusted workflow scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: keys-i/rady
+          ref: ${{ steps.source.outputs.sha }}
+          path: rady-workflow-scripts
+          sparse-checkout: .github/workflows/scripts
+          persist-credentials: false
       - name: Validate pull request trust boundary
         id: pull
         shell: bash
@@ -71,39 +91,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number }}
-        run: |
-          set -euo pipefail
-          echo 'allowed=false' >> "$GITHUB_OUTPUT"
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
-            echo 'PR number must be positive' >&2
-            exit 1
-          }
-          pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
-          jq -e --arg repo "$GH_REPO" --argjson number "$PR_NUMBER" '
-            .number == $number and
-            .state == "open" and .draft == false and
-            .base.repo.full_name == $repo and
-            (.head.sha | type == "string" and test("^[a-f0-9]{40}$"))
-          ' <<<"$pull" > /dev/null
-          dependency=$(jq -r '.user.login == "dependabot[bot]"' <<<"$pull")
-          if [[ "$PRIVATE_REPOSITORY" != true ]]; then
-            jq -e --arg repo "$GH_REPO" '
-              .head.repo.full_name == $repo and
-              (.user.login == "dependabot[bot]" or
-                .author_association == "OWNER" or
-                .author_association == "MEMBER" or
-                .author_association == "COLLABORATOR")
-            ' <<<"$pull" > /dev/null || {
-              echo 'Public repositories run Rady only for same-repository Dependabot or trusted collaborator pull requests' >&2
-              exit 0
-            }
-          fi
-          {
-            echo 'allowed=true'
-            echo "dependency=$dependency"
-            echo "head=$(jq -r '.head.sha' <<<"$pull")"
-            echo "number=$PR_NUMBER"
-          } >> "$GITHUB_OUTPUT"
+        run: bash rady-workflow-scripts/.github/workflows/scripts/validate-pr-trust.sh
 
   review:
     needs: preflight
@@ -244,40 +232,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           EXPECTED_HEAD: ${{ steps.pr.outputs.head }}
-        run: |
-          set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
-            echo 'PR number must be positive' >&2
-            exit 1
-          }
-          pull=''
-          for _ in 1 2 3 4 5 6; do
-            pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
-            mergeable=$(jq -r '.mergeable // "unknown"' <<<"$pull")
-            mergeable_state=$(jq -r '.mergeable_state // "unknown"' <<<"$pull")
-            if [[ "$mergeable" != unknown && "$mergeable_state" != unknown ]]; then
-              break
-            fi
-            sleep 2
-          done
-          jq -e --arg head "$EXPECTED_HEAD" '
-            .state == "open" and .draft == false and
-            .head.sha == $head and
-            (.html_url | type == "string" and startswith("https://")) and
-            (.base.ref | type == "string" and length > 0) and
-            (.base.sha | type == "string" and test("^[a-f0-9]{40}$"))
-          ' <<<"$pull" > /dev/null
-          event="$RUNNER_TEMP/rady-pull-request-event.json"
-          jq -n --argjson pull "$pull" '{pull_request: $pull}' > "$event"
-          {
-            echo "event=$event"
-            echo "url=$(jq -r .html_url <<<"$pull")"
-            echo "head=$(jq -r .head.sha <<<"$pull")"
-            echo "base=$(jq -r .base.ref <<<"$pull")"
-            echo "base_sha=$(jq -r .base.sha <<<"$pull")"
-            echo "mergeable=$mergeable"
-            echo "mergeable_state=$mergeable_state"
-          } >> "$GITHUB_OUTPUT"
+        run: bash .github/workflows/scripts/fetch-pr-state.sh
       - name: Fetch verified Dependabot metadata
         if: steps.pr.outputs.dependency == 'true'
         id: metadata
@@ -330,29 +285,7 @@ jobs:
           PREVIOUS_VERSION: ${{ steps.metadata.outputs.previous-version }}
           NEW_VERSION: ${{ steps.metadata.outputs.new-version }}
           SPEC: ${{ runner.temp }}/rady-repair-spec.json
-        run: |
-          set -euo pipefail
-          target/release/rady agent prepare-repair \
-            --repo "$GH_REPO" \
-            --pr "$PR_NUMBER" \
-            --expected-head "$EXPECTED_HEAD" \
-            --expected-base "$EXPECTED_BASE" \
-            --output "$SPEC"
-          jq -e '
-            type == "object" and
-            (.task | type == "string" and length > 0 and length <= 32000) and
-            (.scope | type == "array" and length > 0 and length <= 20 and all(.[]; type == "string" and length > 0)) and
-            (.tasks | type == "array" and length == 1) and
-            .checks == ["test"] and
-            .acceptance_checks == [{
-              "criterion": 0,
-              "command": "git diff --check",
-              "expected_exit": 0,
-              "expected_output": "",
-              "files": []
-            }]
-          ' "$SPEC" > /dev/null
-          echo "spec=$SPEC" >> "$GITHUB_OUTPUT"
+        run: bash .github/workflows/scripts/prepare-repair-spec.sh
       - name: Check out the verified current base for replacement
         if: steps.repair-spec.outputs.spec != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
