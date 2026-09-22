@@ -24,6 +24,13 @@ permissions: {}
 jobs:
   select:
     name: Choose pull requests
+    if: >-
+      github.event_name == 'push' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch'
+    concurrency:
+      group: rady-selection-${{ github.repository }}-${{ inputs.pr-number || 'backlog' }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -31,9 +38,6 @@ jobs:
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
       has-prs: ${{ steps.targets.outputs.has-prs }}
-      mention: ${{ steps.targets.outputs.mention }}
-      issue-number: ${{ steps.targets.outputs.issue-number }}
-      comment-id: ${{ steps.targets.outputs.comment-id }}
     steps:
       - name: Select requested or pending pull-request reviews
         id: targets
@@ -43,21 +47,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
           EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || inputs.pr-number || '' }}
-          WORKFLOW_STATUS: ${{ github.event.workflow_run.status || '' }}
-          WORKFLOW_NAME: ${{ github.event.workflow_run.name || '' }}
-          CHECK_STATUS: ${{ github.event.check_run.status || '' }}
-          CHECK_NAME: ${{ github.event.check_run.name || '' }}
-          COMMENT_BODY: ${{ github.event.comment.body || '' }}
-          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association || '' }}
-          ISSUE_NUMBER: ${{ github.event.issue.number || 0 }}
-          COMMENT_ID: ${{ github.event.comment.id || 0 }}
+          PR_NUMBER: ${{ inputs.pr-number || '' }}
         run: |
           set -euo pipefail
           matrix='[]'
-          mention=false
-          issue_number=0
-          comment_id=0
 
           emit() {
             jq -e 'type == "array" and length <= 100 and all(.[]; type == "number" and . > 0 and floor == .)' <<<"$matrix" > /dev/null
@@ -68,9 +61,6 @@ jobs:
               else
                 echo 'has-prs=true'
               fi
-              echo "mention=$mention"
-              echo "issue-number=$issue_number"
-              echo "comment-id=$comment_id"
             } >> "$GITHUB_OUTPUT"
           }
 
@@ -106,34 +96,42 @@ jobs:
             (( $(jq 'length' <<<"$matrix") <= 100 )) || { echo 'Rady backfill supports at most 100 eligible pull requests' >&2; exit 1; }
           }
 
-          comment() {
-            [[ "$COMMENT_BODY" =~ ^@radyybot($|[[:space:]]) ]] || return 0
-            (( ${#COMMENT_BODY} <= 4000 )) || return 0
-            case "$COMMENT_ASSOCIATION" in
-              OWNER|MEMBER|COLLABORATOR) ;;
-              *) return 0 ;;
-            esac
-            [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ && "$COMMENT_ID" =~ ^[1-9][0-9]*$ ]] || return 0
-            mention=true
-            issue_number="$ISSUE_NUMBER"
-            comment_id="$COMMENT_ID"
-          }
-
           case "$EVENT_NAME" in
-            pull_request_target) one "$PR_NUMBER" ;;
-            workflow_run)
-              [[ "$WORKFLOW_STATUS" == completed && "$WORKFLOW_NAME" != 'Rady dependasolve' ]] && one "$PR_NUMBER"
-              ;;
-            check_run)
-              [[ "$CHECK_STATUS" == completed && "$CHECK_NAME" != 'Rady dependasolve gate' && "$CHECK_NAME" != Rady\ dependasolve\ /* ]] && one "$PR_NUMBER"
-              ;;
             workflow_dispatch)
               if [[ -n "$PR_NUMBER" ]]; then one "$PR_NUMBER"; else backlog; fi
               ;;
             push|schedule) backlog ;;
-            issue_comment) comment ;;
           esac
           emit
+
+  review-current:
+    name: Rady dependasolve gate
+    if: >-
+      (github.event_name == 'pull_request_target' &&
+      github.event.action != 'closed' && !github.event.pull_request.draft) ||
+      (github.event_name == 'workflow_run' &&
+      github.event.workflow_run.status == 'completed' &&
+      github.event.workflow_run.pull_requests[0].number > 0 &&
+      !startsWith(github.event.workflow_run.name, 'Rady dependasolve')) ||
+      (github.event_name == 'check_run' &&
+      github.event.check_run.status == 'completed' &&
+      github.event.check_run.pull_requests[0].number > 0 &&
+      !startsWith(github.event.check_run.name, 'Rady dependasolve gate') &&
+      !startsWith(github.event.check_run.name, 'Rady dependasolve /'))
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: __SOLVER_REF__
+    with:
+      solver-ref: __SOURCE_REF__
+      app-client-id: __APP_CLIENT_ID__
+      required-checks: '__REQUIRED_CHECKS__'
+      model: ${{ vars.RADY_MODEL || '' }}
+      model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}
+      harness: ${{ vars.RADY_HARNESS || 'codex' }}
+      pr-number: ${{ github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}
+    secrets:
+      app-private-key: __APP_PRIVATE_KEY__
 
   review:
     name: Rady dependasolve gate
@@ -161,8 +159,13 @@ jobs:
 
   respond:
     name: Respond to Rady mention
-    needs: select
-    if: needs.select.outputs.mention == 'true'
+    if: >-
+      github.event_name == 'issue_comment' &&
+      (github.event.comment.body == '@radyybot' ||
+      startsWith(github.event.comment.body, '@radyybot ')) &&
+      (github.event.comment.author_association == 'OWNER' ||
+      github.event.comment.author_association == 'MEMBER' ||
+      github.event.comment.author_association == 'COLLABORATOR')
     permissions:
       contents: read
       issues: read
@@ -171,10 +174,12 @@ jobs:
     with:
       solver-ref: __SOURCE_REF__
       app-client-id: __APP_CLIENT_ID__
-      issue-number: ${{ fromJSON(needs.select.outputs.issue-number) }}
-      comment-id: ${{ fromJSON(needs.select.outputs.comment-id) }}
+      issue-number: ${{ github.event.issue.number }}
+      comment-id: ${{ github.event.comment.id }}
       gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}
+      xai-private-ok: ${{ vars.RADY_XAI_PRIVATE_OK == 'true' }}
     secrets:
       app-private-key: __APP_PRIVATE_KEY__
       gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}
       cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}
+      xai-api-key: ${{ secrets.RADY_XAI_API_KEY }}
