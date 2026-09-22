@@ -13,9 +13,7 @@ on:
   issue_comment:
     types: [created]
   push:
-    paths:
-      - '.github/workflows/dependasolver.yml'
-      - '.github/workflows/scripts/select-review-targets.sh'
+    paths: ['.github/workflows/dependasolver.yml']
   schedule:
     - cron: '17 3 * * *'
   workflow_dispatch:
@@ -40,17 +38,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
-      contents: read
       pull-requests: read
     outputs:
       matrix: ${{ steps.targets.outputs.matrix }}
       has-prs: ${{ steps.targets.outputs.has-prs }}
     steps:
-      - name: Check out workflow scripts
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          sparse-checkout: .github/workflows/scripts
-          persist-credentials: false
       - name: Select requested or pending pull-request reviews
         id: targets
         shell: bash
@@ -60,7 +52,61 @@ jobs:
           PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ inputs.pr-number || '' }}
-        run: bash .github/workflows/scripts/select-review-targets.sh
+        run: |
+          set -euo pipefail
+          matrix='[]'
+
+          emit() {
+            jq -e 'type == "array" and length <= 100 and all(.[]; type == "number" and . > 0 and floor == .)' <<<"$matrix" > /dev/null
+            {
+              echo "matrix=$matrix"
+              if [[ "$matrix" == '[]' ]]; then
+                echo 'has-prs=false'
+              else
+                echo 'has-prs=true'
+              fi
+            } >> "$GITHUB_OUTPUT"
+          }
+
+          one() {
+            [[ "$1" =~ ^[1-9][0-9]*$ ]] || return 0
+            matrix=$(jq -cn --argjson number "$1" '[$number]')
+          }
+
+          backlog() {
+            pulls='[]'
+            for page in 1 2 3; do
+              batch=$(gh api "repos/$GH_REPO/pulls?state=open&per_page=100&sort=created&direction=asc&page=$page")
+              pulls=$(jq -ce --argjson batch "$batch" '. + $batch' <<<"$pulls")
+              (( $(jq 'length' <<<"$batch") < 100 )) && break
+            done
+            if (( $(jq 'length' <<<"$batch") == 100 )); then
+              extra=$(gh api "repos/$GH_REPO/pulls?state=open&per_page=1&sort=created&direction=asc&page=301")
+              [[ "$extra" == '[]' ]] || { echo 'Rady backfill supports at most 300 open pull requests' >&2; exit 1; }
+            fi
+            matrix=$(jq -cer --arg repo "$GH_REPO" --argjson private "$PRIVATE_REPOSITORY" '
+              [.[] | select(
+                .draft == false and
+                ($private or (
+                  .head.repo.full_name? == $repo and
+                  .base.repo.full_name? == $repo and
+                  (.user.login == "dependabot[bot]" or
+                    .author_association == "OWNER" or
+                    .author_association == "MEMBER" or
+                    .author_association == "COLLABORATOR")
+                ))
+              ) | .number]
+            ' <<<"$pulls")
+            (( $(jq 'length' <<<"$matrix") <= 100 )) || { echo 'Rady backfill supports at most 100 eligible pull requests' >&2; exit 1; }
+          }
+
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              if [[ -n "$PR_NUMBER" ]]; then one "$PR_NUMBER"; else backlog; fi
+              ;;
+            push|schedule) backlog ;;
+          esac
+          emit
 
   review-current:
     name: Rady dependasolve gate
@@ -79,9 +125,9 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    uses: keys-i/rady/.github/workflows/solve.yml@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
+    uses: keys-i/rady/.github/workflows/solve.yml@733ae2054c577039056b15e11da8ccef007c1dda
     with:
-      solver-ref: keys-i/rady@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
+      solver-ref: keys-i/rady@733ae2054c577039056b15e11da8ccef007c1dda
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
@@ -103,9 +149,9 @@ jobs:
       max-parallel: 1
       matrix:
         pr-number: ${{ fromJSON(needs.select.outputs.matrix) }}
-    uses: keys-i/rady/.github/workflows/solve.yml@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
+    uses: keys-i/rady/.github/workflows/solve.yml@733ae2054c577039056b15e11da8ccef007c1dda
     with:
-      solver-ref: keys-i/rady@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
+      solver-ref: keys-i/rady@733ae2054c577039056b15e11da8ccef007c1dda
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       required-checks: '["test"]'
       model: ${{ vars.RADY_MODEL || '' }}
@@ -128,9 +174,9 @@ jobs:
       contents: read
       issues: read
       pull-requests: read
-    uses: keys-i/rady/.github/workflows/respond.yml@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
+    uses: keys-i/rady/.github/workflows/respond.yml@733ae2054c577039056b15e11da8ccef007c1dda
     with:
-      solver-ref: keys-i/rady@a04e2ba487e2f7c451ddd19bebea0217b1d9a8ff
+      solver-ref: keys-i/rady@733ae2054c577039056b15e11da8ccef007c1dda
       app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
       issue-number: ${{ github.event.issue.number }}
       comment-id: ${{ github.event.comment.id }}
