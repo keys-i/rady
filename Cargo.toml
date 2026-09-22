@@ -1,6 +1,6 @@
 [package]
 name = "rady"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes and Dependabot PR reviews from local agent CLIs"
