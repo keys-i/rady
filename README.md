@@ -1,9 +1,15 @@
-# Rady
+<h1 align="center">Rady</h1>
 
-[![Checks](https://github.com/keys-i/rady/actions/workflows/checks.yml/badge.svg)](https://github.com/keys-i/rady/actions/workflows/checks.yml)
-[![Crates.io](https://img.shields.io/crates/v/rady.svg)](https://crates.io/crates/rady)
-[![Downloads](https://img.shields.io/crates/d/rady.svg)](https://crates.io/crates/rady)
-[![License](https://img.shields.io/github/license/keys-i/rady)](LICENSE)
+<p align="center">
+  <a href="https://github.com/keys-i/rady/actions/workflows/checks.yml"><img alt="Checks" src="https://github.com/keys-i/rady/actions/workflows/checks.yml/badge.svg"></a>
+  <a href="https://crates.io/crates/rady"><img alt="Crates.io" src="https://img.shields.io/crates/v/rady.svg"></a>
+  <a href="https://crates.io/crates/rady"><img alt="Downloads" src="https://img.shields.io/crates/d/rady.svg"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/keys-i/rady"></a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/rady-poster.webp" alt="Rady duck at a terminal beside the words: Make the change. Check the work. Rady keeps the patch, tests, and review together." width="100%">
+</p>
 
 Rady is a Rust CLI for making checked code changes and reviewing dependency pull requests. You review the evidence and keep the final decision.
 
