@@ -1,5 +1,10 @@
 # Rady
 
+[![Checks](https://github.com/keys-i/rady/actions/workflows/checks.yml/badge.svg)](https://github.com/keys-i/rady/actions/workflows/checks.yml)
+[![Crates.io](https://img.shields.io/crates/v/rady.svg)](https://crates.io/crates/rady)
+[![Downloads](https://img.shields.io/crates/d/rady.svg)](https://crates.io/crates/rady)
+[![License](https://img.shields.io/github/license/keys-i/rady)](LICENSE)
+
 Rady is a Rust CLI for making checked code changes and reviewing dependency pull requests. You review the evidence and keep the final decision.
 
 - `rady code` turns a request into an isolated, checked change
