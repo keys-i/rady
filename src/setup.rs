@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::{anyhow, bail};
+use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::Result;
@@ -13,11 +13,11 @@ mod files;
 pub(crate) use consent::verified_configuration;
 use consent::{PRIVACY_VERSION, TERMS_VERSION};
 pub use files::{checks, local_files};
-use files::{setup_files, write_setup_file};
+use files::{existing_configuration, refuse_existing_configuration, setup_files, write_setup_file};
 
 const TRUSTED_SOLVER_REPOSITORY: &str = "keys-i/rady";
-const TERMS_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/TERMS.md";
-const PRIVACY_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/PRIVACY.md";
+pub const TERMS_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/TERMS.md";
+pub const PRIVACY_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/PRIVACY.md";
 
 #[derive(Clone, Debug)]
 pub struct SourceRef {
@@ -118,13 +118,17 @@ pub fn install(
     required: &[String],
     directory: &Path,
     new_app: bool,
-    identity: Identity,
+    _identity: Identity,
     overwrite: bool,
     accept_terms: bool,
 ) -> Result<()> {
-    if !accept_terms {
-        bail!("read {TERMS_URL} and {PRIVACY_URL}, then rerun with --accept-terms if you agree");
-    }
+    ensure_directory_repository(directory, repo)?;
+    let existing = existing_configuration(directory)?;
+    let existing_agreement = existing
+        .as_ref()
+        .filter(|configuration| consent::accepted_configuration(configuration))
+        .and_then(|configuration| configuration.get("agreement"));
+    setup_files(directory, source, required, overwrite, existing_agreement)?;
     let info = github::api(&format!("repos/{repo}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("repository response was empty"))?;
     if info["full_name"]
@@ -143,127 +147,220 @@ pub fn install(
     ) {
         bail!("only personal and organisation repositories are supported");
     }
-    for workflow in ["orchestrate.yml", "solve.yml"] {
-        let source_file = github::api(
-            &format!(
-                "repos/{}/contents/.github/workflows/{workflow}?ref={}",
-                source.repository, source.commit
-            ),
-            None,
-            "GET",
-            false,
-        )?
-        .ok_or_else(|| anyhow!("source workflow response was empty"))?;
-        if source_file["type"] != "file" {
-            bail!("publish every source workflow at the immutable commit first");
-        }
-    }
-    let existing = if new_app {
-        None
-    } else {
-        existing_app(TRUSTED_SOLVER_REPOSITORY, identity)?
-    };
-    let effective_identity = if let Some(existing) = existing {
-        let effective_identity = existing.identity;
-        verify_existing_app(existing)?;
-        effective_identity
-    } else if new_app {
-        let app = apps::register_app(TRUSTED_SOLVER_REPOSITORY, identity)?;
-        apps::credentials(TRUSTED_SOLVER_REPOSITORY, &app, identity)?;
-        identity
-    } else {
+    if new_app {
         bail!(
-            "no existing {} App credentials; use --new-app --apply to register one",
-            identity.display()
+            "--new-app is no longer available from a target repository; radyybot is centrally hosted by {TRUSTED_SOLVER_REPOSITORY}"
         );
+    }
+    let reuse_agreement = match existing.as_ref() {
+        Some(configuration) => consent::verified_existing_configuration(repo, configuration)?,
+        None => false,
     };
-    let existing = existing_app(TRUSTED_SOLVER_REPOSITORY, effective_identity)?
-        .ok_or_else(|| anyhow!("central App credentials disappeared during setup"))?;
-    verify_existing_app(existing)?;
-    // GitHub reserves installation lookup for App JWTs; central token creation verifies access
-    let agreement = consent::agreement(repo)?;
+    if !accept_terms && !reuse_agreement {
+        bail!("read {TERMS_URL} and {PRIVACY_URL}, then rerun with --accept-terms if you agree");
+    }
+    if !overwrite && existing.is_some() && !reuse_agreement {
+        bail!("refusing to overwrite existing .github/rady.json");
+    }
+    let agreement = if reuse_agreement {
+        existing
+            .as_ref()
+            .and_then(|configuration| configuration.get("agreement"))
+            .cloned()
+            .ok_or_else(|| anyhow!("existing Rady agreement was missing"))?
+    } else {
+        let app = apps::public_app(apps::RADYYBOT_SLUG)?;
+        apps::require_app_owner(&app)?;
+        apps::require_permissions(&app)?;
+        apps::open_installation(apps::RADYYBOT_SLUG, repo)?;
+        consent::agreement(repo)?
+    };
     let files = setup_files(directory, source, required, overwrite, Some(&agreement))?;
     for (path, content) in files {
         let replace = overwrite && path.ends_with(".github/rady.json");
         write_setup_file(&path, content.as_bytes(), replace)?;
     }
-    github::api(
-        &format!("repos/{repo}"),
-        Some(&json!({"allow_auto_merge": true, "allow_squash_merge": true})),
-        "PATCH",
-        false,
-    )?;
     Ok(())
 }
 
-struct ExistingApp {
-    identity: Identity,
-    client_id: String,
-    slug: String,
-}
-
-fn existing_app(repo: &str, identity: Identity) -> Result<Option<ExistingApp>> {
-    let primary = credentials(repo, identity)?;
-    if identity == Identity::Dependasolver || primary.is_some() {
-        return Ok(primary);
-    }
-    credentials(repo, Identity::Dependasolver)
-}
-
-fn credentials(repo: &str, identity: Identity) -> Result<Option<ExistingApp>> {
-    let prefix = identity.prefix();
-    let key = github::api(
-        &format!("repos/{repo}/actions/secrets/{prefix}_APP_PRIVATE_KEY"),
-        None,
-        "GET",
-        true,
-    )?;
-    let client = github::api(
-        &format!("repos/{repo}/actions/variables/{prefix}_APP_CLIENT_ID"),
-        None,
-        "GET",
-        true,
-    )?;
-    let slug = github::api(
-        &format!("repos/{repo}/actions/variables/{prefix}_APP_SLUG"),
-        None,
-        "GET",
-        true,
-    )?;
-    match (key, client, slug) {
-        (None, None, None) => Ok(None),
-        (Some(_), Some(client), Some(slug)) => {
-            let client_id = client["value"]
-                .as_str()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| anyhow!("incomplete {prefix} App setup: client ID is empty"))?;
-            let slug = slug["value"]
-                .as_str()
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| anyhow!("incomplete {prefix} App setup: slug is empty"))?;
-            Ok(Some(ExistingApp {
-                identity,
-                client_id: client_id.to_owned(),
-                slug: slug.to_owned(),
-            }))
+/// Resolve an explicit repository or the repository containing the current checkout
+pub fn resolve_repository_in(value: Option<&str>, directory: &Path) -> Result<String> {
+    let local = repository_in_directory(directory)?;
+    match value {
+        Some(repository) => {
+            github::validate_repository(repository)?;
+            if !same_repository(repository, &local) {
+                bail!(
+                    "--directory belongs to {local}, not {repository}; choose the matching checkout"
+                );
+            }
+            Ok(local)
         }
-        _ => bail!(
-            "incomplete {prefix} App setup: configure all App credentials or use --new-app --apply"
-        ),
+        None => Ok(local),
     }
 }
 
-fn verify_existing_app(existing: ExistingApp) -> Result<()> {
-    let app = apps::public_app(&existing.slug)?;
-    apps::require_app_owner(&app)?;
-    apps::require_permissions(&app)?;
-    if app["client_id"].as_str() != Some(&existing.client_id) {
-        bail!(
-            "existing {} App slug and Client ID do not match; no credentials were changed",
-            existing.identity.display()
-        );
+pub fn ensure_directory_repository(directory: &Path, repo: &str) -> Result<()> {
+    github::validate_repository(repo)?;
+    let local = repository_in_directory(directory)?;
+    if !same_repository(repo, &local) {
+        bail!("--directory belongs to {local}, not {repo}; choose the matching checkout");
     }
     Ok(())
+}
+
+pub fn has_verified_agreement(repo: &str, directory: &Path) -> Result<bool> {
+    github::validate_repository(repo)?;
+    match existing_configuration(directory)? {
+        Some(configuration) => consent::verified_existing_configuration(repo, &configuration),
+        None => Ok(false),
+    }
+}
+
+fn same_repository(left: &str, right: &str) -> bool {
+    left.eq_ignore_ascii_case(right)
+}
+
+fn repository_in_directory(directory: &Path) -> Result<String> {
+    let root = directory
+        .canonicalize()
+        .context("--directory must be an existing directory")?;
+    if !root.is_dir() {
+        bail!("--directory must be a directory");
+    }
+    let arguments = vec![
+        "repo".to_owned(),
+        "view".to_owned(),
+        "--json".to_owned(),
+        "nameWithOwner".to_owned(),
+    ];
+    let response = github::gh_in_directory(&arguments, None, false, &root)?
+        .ok_or_else(|| anyhow!("GitHub returned no repository"))?;
+    repository_from_view(&response)
+}
+
+/// Resolve explicit CI checks or evidence from the repository's default branch
+pub fn resolve_checks(repo: &str, explicit: &[String]) -> Result<Vec<String>> {
+    github::validate_repository(repo)?;
+    if !explicit.is_empty() {
+        return checks(explicit);
+    }
+    let repository = github::api(&format!("repos/{repo}"), None, "GET", false)?
+        .ok_or_else(|| anyhow!("repository response was empty"))?;
+    let branch = repository_default_branch(repo, &repository)?;
+    let branch_response = github::api(
+        &format!("repos/{repo}/branches/{}", percent_encode(branch)),
+        None,
+        "GET",
+        false,
+    )?
+    .ok_or_else(|| anyhow!("default branch response was empty"))?;
+    let commit = branch_response["commit"]["sha"]
+        .as_str()
+        .filter(|sha| valid_commit(sha))
+        .ok_or_else(|| anyhow!("default branch has no valid commit"))?;
+    if let Some(required) = github::api(
+        &format!(
+            "repos/{repo}/branches/{}/protection/required_status_checks",
+            percent_encode(branch)
+        ),
+        None,
+        "GET",
+        true,
+    )? {
+        let required = required_check_names(&required)?;
+        if !required.is_empty() {
+            return Ok(required);
+        }
+    }
+    let runs = github::api(
+        &format!("repos/{repo}/commits/{commit}/check-runs?per_page=100"),
+        None,
+        "GET",
+        false,
+    )?
+    .ok_or_else(|| anyhow!("latest check-runs response was empty"))?;
+    let statuses = github::api(
+        &format!("repos/{repo}/commits/{commit}/statuses?per_page=100"),
+        None,
+        "GET",
+        false,
+    )?
+    .ok_or_else(|| anyhow!("latest statuses response was empty"))?;
+    latest_check_names(&runs, &statuses)
+}
+
+fn repository_from_view(response: &str) -> Result<String> {
+    let repository = serde_json::from_str::<Value>(response)
+        .context("GitHub returned an invalid repository response")?["nameWithOwner"]
+        .as_str()
+        .ok_or_else(|| anyhow!("GitHub returned no repository name"))?
+        .to_owned();
+    github::validate_repository(&repository)?;
+    Ok(repository)
+}
+
+fn repository_default_branch<'a>(repo: &str, response: &'a Value) -> Result<&'a str> {
+    if response["full_name"]
+        .as_str()
+        .is_none_or(|name| !name.eq_ignore_ascii_case(repo))
+    {
+        bail!("GitHub returned a different repository");
+    }
+    response["default_branch"]
+        .as_str()
+        .filter(|branch| {
+            !branch.is_empty() && branch.len() <= 255 && !branch.chars().any(char::is_control)
+        })
+        .ok_or_else(|| anyhow!("repository has no valid default branch"))
+}
+
+fn required_check_names(response: &Value) -> Result<Vec<String>> {
+    let contexts = response["contexts"]
+        .as_array()
+        .ok_or_else(|| anyhow!("required status checks omitted contexts"))?;
+    let check_rows = response["checks"].as_array().map_or(&[][..], Vec::as_slice);
+    let names = contexts
+        .iter()
+        .filter_map(Value::as_str)
+        .chain(
+            check_rows
+                .iter()
+                .filter_map(|check| check["context"].as_str()),
+        )
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if names.len() != contexts.len() + check_rows.len() {
+        bail!("required status checks contain invalid names");
+    }
+    checks(&names)
+}
+
+fn latest_check_names(runs: &Value, statuses: &Value) -> Result<Vec<String>> {
+    let runs = runs["check_runs"]
+        .as_array()
+        .ok_or_else(|| anyhow!("latest check-runs response omitted check_runs"))?;
+    let statuses = statuses
+        .as_array()
+        .ok_or_else(|| anyhow!("latest statuses response was not a list"))?;
+    if runs.len() >= 100 || statuses.len() >= 100 {
+        bail!("latest CI evidence exceeds the setup limit; pass --check explicitly");
+    }
+    let names = runs
+        .iter()
+        .chain(statuses)
+        .map(|row| {
+            row["name"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| row["context"].as_str().map(str::to_owned))
+        })
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| anyhow!("latest CI evidence contains an invalid name"))?;
+    if names.is_empty() {
+        bail!("no CI evidence found; pass --check explicitly");
+    }
+    checks(&names)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,7 +377,11 @@ pub fn run(
 ) -> Result<Value> {
     github::validate_repository(repo)?;
     let required = checks(required)?;
-    let files = local_files(directory, source, &required, identity, overwrite)?;
+    refuse_existing_configuration(directory, overwrite)?;
+    let agreement = existing_configuration(directory)?
+        .filter(consent::accepted_configuration)
+        .and_then(|configuration| configuration.get("agreement").cloned());
+    let files = setup_files(directory, source, &required, overwrite, agreement.as_ref())?;
     let preview = json!({
         "repository": repo,
         "source": source.joined(),
@@ -427,8 +528,6 @@ mod tests {
         );
 
         let orchestrator = include_str!("../.github/workflows/orchestrate.yml");
-        let solver = include_str!("../.github/workflows/solve.yml");
-        let selector = include_str!("../.github/workflows/scripts/select-central-targets.sh");
         for secret in [
             "RADY_APP_PRIVATE_KEY",
             "RADY_APP_CLIENT_ID",
@@ -440,27 +539,70 @@ mod tests {
             assert!(orchestrator.contains(secret));
             assert!(!serde_json::to_string(&configuration)?.contains(secret));
         }
-        assert!(orchestrator.contains("target/release/rady agent sweep --owner keys-i"));
-        assert!(orchestrator.contains("uses: ./.github/workflows/solve.yml"));
-        assert!(orchestrator.contains(
-            "    permissions:\n      contents: read\n      pull-requests: write\n    strategy:"
-        ));
-        assert!(orchestrator.contains("permission-issues: read"));
+        assert!(orchestrator.contains("rady agent serve --once"));
+        assert!(!orchestrator.contains("--owner"));
+        assert!(!orchestrator.contains("target/release/rady agent sweep"));
+        assert!(!orchestrator.contains("target/release/rady agent respond"));
         assert!(!orchestrator.contains("runs-on: self-hosted"));
-        assert!(!solver.contains("runs-on: self-hosted"));
         assert!(!orchestrator.contains("actions/cache@"));
-        assert!(!solver.contains("actions/cache@"));
-        assert!(solver.contains("repo:"));
-        assert!(solver.contains("repo-owner:"));
-        assert!(solver.contains("repo-name:"));
-        assert!(solver.contains("owner: ${{ inputs.repo-owner }}"));
-        assert!(solver.contains("repositories: ${{ inputs.repo-name }}"));
-        assert!(selector.contains(".agreement.terms == \"2026-09-23\""));
-        assert!(selector.contains(".agreement.privacy == \"2026-09-23\""));
-        assert!(selector.contains("collaborators/$signer/permission"));
-        assert!(selector.contains("Rady service agreement acceptance"));
-        assert!(selector.contains(".head.repo.full_name == $repository"));
-        assert!(selector.contains(".author_association == \"OWNER\""));
+        assert!(orchestrator.contains("permissions:\n  contents: read"));
+        assert!(!orchestrator.contains("contents: write"));
         Ok(())
+    }
+
+    #[test]
+    fn setup_response_parsing_is_bounded_and_unambiguous() {
+        for (response, expected) in [
+            (r#"{"nameWithOwner":"keys-i/rady"}"#, Some("keys-i/rady")),
+            (r#"{"nameWithOwner":"bad"}"#, None),
+            (r#"{"nameWithOwner":null}"#, None),
+            ("not json", None),
+        ] {
+            assert_eq!(
+                repository_from_view(response).ok().as_deref(),
+                expected,
+                "{response}"
+            );
+        }
+
+        for (required, latest, valid) in [
+            (
+                json!({"contexts": ["test"], "checks": [{"context": "lint"}]}),
+                json!({"check_runs": []}),
+                true,
+            ),
+            (json!({"contexts": []}), json!({"check_runs": []}), false),
+            (
+                json!({"contexts": ["\n"]}),
+                json!({"check_runs": []}),
+                false,
+            ),
+            (
+                json!({"contexts": (0..33).map(|index| format!("check-{index}")).collect::<Vec<_>>() }),
+                json!({"check_runs": []}),
+                false,
+            ),
+        ] {
+            assert_eq!(required_check_names(&required).is_ok(), valid, "{required}");
+            let statuses = json!([]);
+            assert!(latest_check_names(&latest, &statuses).is_err());
+        }
+
+        let latest = json!({"check_runs": [{"name": "test"}, {"name": "lint"}]});
+        assert_eq!(
+            latest_check_names(&latest, &json!([{"context": "test"}])).expect("checks"),
+            ["test", "lint"]
+        );
+    }
+
+    #[test]
+    fn repository_matching_is_case_insensitive_but_exact() {
+        for (left, right, expected) in [
+            ("keys-i/rady", "KEYS-I/RADY", true),
+            ("keys-i/rady", "keys-i/other", false),
+            ("keys-i/rady", "other/rady", false),
+        ] {
+            assert_eq!(same_repository(left, right), expected, "{left} / {right}");
+        }
     }
 }

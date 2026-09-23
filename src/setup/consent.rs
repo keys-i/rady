@@ -132,6 +132,44 @@ pub(crate) fn verified_configuration(github: &github::GitHub, value: &Value) -> 
     ))
 }
 
+pub(super) fn verified_existing_configuration(repo: &str, value: &Value) -> Result<bool> {
+    if !accepted_configuration(value) {
+        return Ok(false);
+    }
+    let agreement = &value["agreement"];
+    let accepted_by = agreement["accepted_by"]
+        .as_str()
+        .ok_or_else(|| anyhow!("accepted configuration omitted its signer"))?;
+    let issue = agreement["issue"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("accepted configuration omitted its receipt issue"))?;
+    let comment = agreement["comment"]
+        .as_u64()
+        .ok_or_else(|| anyhow!("accepted configuration omitted its receipt comment"))?;
+    let issue_value = github::api(&format!("repos/{repo}/issues/{issue}"), None, "GET", true)?;
+    let comment_value = github::api(
+        &format!("repos/{repo}/issues/comments/{comment}"),
+        None,
+        "GET",
+        true,
+    )?;
+    let permission = github::api(
+        &format!("repos/{repo}/collaborators/{accepted_by}/permission"),
+        None,
+        "GET",
+        true,
+    )?;
+    Ok(receipt_matches(
+        repo,
+        accepted_by,
+        issue,
+        comment,
+        issue_value.as_ref(),
+        comment_value.as_ref(),
+        permission.as_ref(),
+    ))
+}
+
 fn receipt_matches(
     repo: &str,
     accepted_by: &str,

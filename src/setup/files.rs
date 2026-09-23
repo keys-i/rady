@@ -11,22 +11,29 @@ use super::SourceRef;
 use crate::Result;
 use crate::apps::Identity;
 
+const MAX_CONFIGURATION_BYTES: u64 = 64 * 1024;
+
 pub fn checks(values: &[String]) -> Result<Vec<String>> {
-    if values.is_empty()
-        || values.iter().any(|value| {
-            value.trim().is_empty()
-                || value.chars().any(char::is_control)
-                || value.starts_with("Rady dependasolve")
-        })
-    {
+    if values.is_empty() || values.len() > 32 || values.iter().any(|value| !valid_check(value)) {
         bail!("provide nonempty CI checks that do not name Rady dependasolve itself");
     }
     let mut seen = BTreeSet::new();
-    Ok(values
+    let checks = values
         .iter()
         .filter(|value| seen.insert((*value).clone()))
         .cloned()
-        .collect())
+        .collect::<Vec<_>>();
+    if checks.len() > 32 {
+        bail!("provide at most 32 CI checks");
+    }
+    Ok(checks)
+}
+
+fn valid_check(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= 200
+        && !value.chars().any(char::is_control)
+        && !value.starts_with("Rady dependasolve")
 }
 
 pub fn local_files(
@@ -37,6 +44,46 @@ pub fn local_files(
     overwrite: bool,
 ) -> Result<BTreeMap<PathBuf, String>> {
     setup_files(directory, source, required, overwrite, None)
+}
+
+pub(super) fn existing_configuration(directory: &Path) -> Result<Option<Value>> {
+    let root = directory
+        .canonicalize()
+        .context("--directory must be an existing directory")?;
+    if !root.is_dir() {
+        bail!("--directory must be a directory");
+    }
+    let config = safe_path(&root, ".github/rady.json")?;
+    match fs::symlink_metadata(&config) {
+        Ok(metadata) if metadata.file_type().is_file() => {
+            let text = read_configuration(&config, &metadata)?;
+            Ok(serde_json::from_str(&text).ok())
+        }
+        Ok(_) => bail!("refusing to read existing content: {}", config.display()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+pub(super) fn refuse_existing_configuration(directory: &Path, overwrite: bool) -> Result<()> {
+    if overwrite {
+        return Ok(());
+    }
+    let root = directory
+        .canonicalize()
+        .context("--directory must be an existing directory")?;
+    if !root.is_dir() {
+        bail!("--directory must be a directory");
+    }
+    let config = safe_path(&root, ".github/rady.json")?;
+    match fs::symlink_metadata(&config) {
+        Ok(_) => bail!(
+            "refusing to overwrite existing content: {}",
+            config.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub(super) fn setup_files(
@@ -74,7 +121,8 @@ pub(super) fn setup_files(
         match fs::symlink_metadata(path) {
             Ok(metadata) => {
                 if !metadata.file_type().is_file()
-                    || (fs::read_to_string(path)? != *content && (!overwrite || path != &config))
+                    || (read_configuration(path, &metadata)? != *content
+                        && (!overwrite || path != &config))
                 {
                     bail!("refusing to overwrite existing content: {}", path.display());
                 }
@@ -84,6 +132,16 @@ pub(super) fn setup_files(
         }
     }
     Ok(files)
+}
+
+fn read_configuration(path: &Path, metadata: &fs::Metadata) -> Result<String> {
+    if metadata.len() > MAX_CONFIGURATION_BYTES {
+        bail!(
+            "existing Rady configuration is too large: {}",
+            path.display()
+        );
+    }
+    fs::read_to_string(path).map_err(Into::into)
 }
 
 const DEPENDABOT_ECOSYSTEMS: &[(&str, &[&str], &[&str])] = &[
@@ -256,6 +314,39 @@ mod tests {
         assert_eq!(fs::read_to_string(&path)?, *generated);
         assert!(write_setup_file(&path, b"blocked update\n", false).is_err());
         assert_eq!(fs::read_to_string(&path)?, *generated);
+        fs::write(&path, vec![b'x'; MAX_CONFIGURATION_BYTES as usize + 1])?;
+        assert!(
+            local_files(
+                temporary.path(),
+                &source,
+                &["test".into()],
+                Identity::Rady,
+                true
+            )
+            .is_err(),
+            "oversized configuration must fail before replacement"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn existing_configuration_is_reused_only_when_it_is_parseable() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let config = temporary.path().join(".github/rady.json");
+        fs::create_dir_all(config.parent().expect("configuration parent"))?;
+        for (content, expected) in [
+            (r#"{"schema":1,"agreement":{"terms":"2026-09-23"}}"#, true),
+            ("not json", false),
+        ] {
+            fs::write(&config, content)?;
+            assert_eq!(
+                existing_configuration(temporary.path())?.is_some(),
+                expected,
+                "{content}"
+            );
+        }
+        assert!(refuse_existing_configuration(temporary.path(), false).is_err());
+        assert!(refuse_existing_configuration(temporary.path(), true).is_ok());
         Ok(())
     }
 

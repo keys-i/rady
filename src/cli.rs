@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 use std::time::Duration;
@@ -30,7 +30,7 @@ use crate::ui::{OutputMode, Theme, Ui, json_success_document, print_markdown};
     version,
     about = "Human-first, evidence-gated coding and dependency review",
     disable_help_subcommand = true,
-    after_help = "Examples:\n  rady code \"add structured logging\" --check test\n  rady agent ask \"why is this test failing?\"\n  rady dependasolve --repo owner/repo --check test --apply"
+    after_help = "Examples:\n  rady setup\n  rady code \"add structured logging\" --check test\n  rady agent ask \"why is this test failing?\"\n  rady dependasolve --repo owner/repo --check test --apply"
 )]
 struct Cli {
     #[arg(long, value_enum, global = true, default_value = "auto")]
@@ -45,6 +45,10 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Connect this repository to radyybot
+    #[command(after_help = "Example:\n  rady setup")]
+    Setup(SetupArgs),
+
     /// Turn a request into a checked local change or pull request
     #[command(after_help = "Example:\n  rady code \"fix the parser\" --check test")]
     Code(Box<CodeArgs>),
@@ -187,6 +191,32 @@ struct DependSolveArgs {
 
     /// Accept the current Rady service terms and privacy policy for this repository
     #[arg(long, requires = "apply")]
+    accept_terms: bool,
+}
+
+#[derive(Debug, Args)]
+struct SetupArgs {
+    /// Repository to connect; defaults to the current GitHub repository
+    #[arg(long)]
+    repo: Option<String>,
+
+    /// Required CI check; defaults to evidence from the repository
+    #[arg(long = "check", visible_alias = "checks", num_args = 1..)]
+    checks: Vec<String>,
+
+    #[arg(long, default_value = ".")]
+    directory: PathBuf,
+
+    /// Optional trusted solver source; defaults to the latest keys-i/rady commit
+    #[arg(long)]
+    solver_ref: Option<String>,
+
+    /// Refuse to replace an existing generated configuration
+    #[arg(long)]
+    no_overwrite: bool,
+
+    /// Accept the current Rady service terms and privacy policy
+    #[arg(long)]
     accept_terms: bool,
 }
 
@@ -389,6 +419,7 @@ where
     })?;
     let output = cli.output;
     let result = match cli.command {
+        Commands::Setup(arguments) => setup(arguments, cli.theme, cli.output),
         Commands::Code(arguments) => crate::code_command::run(*arguments, cli.theme, cli.output),
         Commands::Dependasolve(arguments) => dependasolve(arguments, cli.theme, cli.output),
         Commands::Runs => delivery::list_runs(cli.theme, cli.output),
@@ -417,6 +448,77 @@ where
         Commands::Review(arguments) => review(arguments),
     };
     result.map_err(|error| CliFailure::new(output, &error).into())
+}
+
+fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<()> {
+    let mut ui = Ui::new(theme, output, 4);
+    ui.title(
+        "Rady setup",
+        "One connection. No target-repository secrets.",
+    );
+    ui.stage("Finding repository");
+    let repository = setup::resolve_repository_in(arguments.repo.as_deref(), &arguments.directory)?;
+    ui.stage("Finding CI evidence");
+    let checks = setup::resolve_checks(&repository, &arguments.checks)?;
+    ui.stage("Preparing radyybot");
+    if !arguments.accept_terms && !setup::has_verified_agreement(&repository, &arguments.directory)?
+    {
+        arguments.accept_terms = accept_terms(output)?;
+    } else {
+        arguments.accept_terms = true;
+    }
+    let source = SourceRef::resolve(arguments.solver_ref.as_deref())?;
+    let preview = setup::run(
+        &repository,
+        &source,
+        &checks,
+        &arguments.directory,
+        Identity::Rady,
+        false,
+        !arguments.no_overwrite,
+        true,
+        arguments.accept_terms,
+    )?;
+    ui.stage("Ready");
+    if output == OutputMode::Json {
+        println!("{}", json_success_document("setup", &preview)?);
+        return Ok(());
+    }
+    let files = preview["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(|path| format!("- `{path}`"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    print_markdown(
+        &format!(
+            "## Repository setup is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials:** `keys-i/rady`\n\nNo secrets were added to this repository. Finish the radyybot installation page if GitHub opened it, then commit the public files below. The central service will pick up mentions and dependency pull requests on its next cycle.\n\n### Files\n\n{files}",
+            checks.join(", ")
+        ),
+        theme,
+    )
+}
+
+fn accept_terms(output: OutputMode) -> Result<bool> {
+    if output == OutputMode::Json || !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+        bail!(
+            "read {} and {}, then rerun with --accept-terms if you agree",
+            setup::TERMS_URL,
+            setup::PRIVACY_URL
+        );
+    }
+    eprintln!("Terms: {}", setup::TERMS_URL);
+    eprintln!("Privacy: {}", setup::PRIVACY_URL);
+    eprint!("Do you agree? [y/N] ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    if matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes") {
+        return Ok(true);
+    }
+    bail!("setup was not changed; rerun with --accept-terms after you agree")
 }
 
 fn requested_output(arguments: &[OsString]) -> OutputMode {
@@ -735,6 +837,7 @@ mod tests {
     fn cli_matrix_covers_human_commands_and_help_without_help_subcommands() {
         for arguments in [
             vec!["rady", "--help"],
+            vec!["rady", "setup", "--help"],
             vec!["rady", "code", "--help"],
             vec!["rady", "dependasolve", "--help"],
             vec!["rady", "agent", "--help"],
@@ -769,6 +872,18 @@ mod tests {
                 "help must not be a generated subcommand: {help}"
             );
         }
+
+        let help = Cli::try_parse_from(["rady", "setup", "--help"])
+            .expect_err("help exits after rendering")
+            .to_string();
+        assert!(
+            !help.contains("app-client-id"),
+            "setup keeps App keys central"
+        );
+        assert!(
+            !help.contains("private-key") && !help.contains("gemini") && !help.contains("cerebras"),
+            "setup must not ask target repositories for provider credentials"
+        );
     }
 
     #[test]
@@ -782,6 +897,7 @@ mod tests {
                 "--check",
                 "test",
             ],
+            vec!["rady", "setup", "--repo", "owner/repo", "--check", "test"],
             vec![
                 "rady",
                 "dependasolve",
@@ -876,6 +992,15 @@ mod tests {
         assert!(arguments.solver_ref.is_none());
         assert!(arguments.no_overwrite);
         assert_eq!(arguments.identity, Identity::Rady);
+    }
+
+    #[test]
+    fn setup_requires_explicit_consent_for_json_output() {
+        let error = accept_terms(OutputMode::Json).expect_err("JSON setup cannot prompt");
+        let message = error.to_string();
+        assert!(message.contains(setup::TERMS_URL));
+        assert!(message.contains(setup::PRIVACY_URL));
+        assert!(message.contains("--accept-terms"));
     }
 
     #[test]

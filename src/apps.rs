@@ -13,6 +13,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 pub const APP_OWNER: &str = "keys-i";
+pub const RADYYBOT_SLUG: &str = "radyybot";
 const DUCK_ROUTE: &str = "/rady-duck.png";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -42,7 +43,7 @@ impl Identity {
     pub const fn slug(self) -> &'static str {
         match self {
             Self::Dependasolver => "dependasolver",
-            Self::Rady => "rady",
+            Self::Rady => RADYYBOT_SLUG,
         }
     }
 }
@@ -136,7 +137,7 @@ pub fn require_permissions(app: &Value) -> Result<()> {
 
 pub fn public_app(slug: &str) -> Result<Value> {
     if !Regex::new(r"^[a-z0-9-]+$")?.is_match(slug) {
-        bail!("set the existing App URL slug, or use --new-app --apply");
+        bail!("the configured GitHub App slug is invalid");
     }
     github::api(&format!("apps/{slug}"), None, "GET", false)?
         .ok_or_else(|| anyhow!("could not verify the existing public App"))

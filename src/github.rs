@@ -61,8 +61,15 @@ impl GitHub {
             "Accept: application/vnd.github.raw+json".to_owned(),
             endpoint.clone(),
         ];
-        gh_with_token(&arguments, None, true, Some(&self.token), None)
-            .with_context(|| format!("GitHub API GET {}", safe_endpoint_label(&endpoint)))
+        gh_with_token(
+            &arguments,
+            None,
+            true,
+            Some(&self.token),
+            None,
+            Path::new("."),
+        )
+        .with_context(|| format!("GitHub API GET {}", safe_endpoint_label(&endpoint)))
     }
 
     pub fn pages(&self, path: &str, key: Option<&str>) -> Result<Vec<Value>> {
@@ -131,7 +138,17 @@ pub fn validate_repository(value: &str) -> Result<()> {
 }
 
 pub fn gh(arguments: &[String], data: Option<&str>, missing: bool) -> Result<Option<String>> {
-    gh_with_token(arguments, data, missing, None, None)
+    gh_in_directory(arguments, data, missing, Path::new("."))
+}
+
+/// Run an ambient-authenticated GitHub CLI request from a specific checkout
+pub fn gh_in_directory(
+    arguments: &[String],
+    data: Option<&str>,
+    missing: bool,
+    directory: &Path,
+) -> Result<Option<String>> {
+    gh_with_token(arguments, data, missing, None, None, directory)
 }
 
 fn gh_with_token(
@@ -140,6 +157,7 @@ fn gh_with_token(
     missing: bool,
     token: Option<&str>,
     cancel_file: Option<&Path>,
+    directory: &Path,
 ) -> Result<Option<String>> {
     let binary = agent::which("gh").ok_or_else(|| anyhow!("install GitHub CLI"))?;
     let mut ambient_auth = BTreeMap::new();
@@ -152,7 +170,7 @@ fn gh_with_token(
     let output = agent::execute(
         binary.as_os_str(),
         arguments,
-        Path::new("."),
+        directory,
         data.unwrap_or_default().as_bytes(),
         Duration::from_secs(180),
         &environment,
@@ -326,6 +344,7 @@ fn api_with_token(
         missing,
         token,
         cancel_file,
+        Path::new("."),
     )
     .with_context(|| format!("GitHub API {method} {}", safe_endpoint_label(endpoint)))?;
     let Some(output) = output.filter(|value| !value.trim().is_empty()) else {
