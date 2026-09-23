@@ -10,6 +10,10 @@ use serde_json::Value;
 use crate::Result;
 use crate::agent;
 
+mod app_auth;
+
+pub(crate) use app_auth::mint_installation_tokens;
+
 #[derive(Clone, Debug)]
 pub struct GitHub {
     repo: String,

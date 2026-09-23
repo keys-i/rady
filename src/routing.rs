@@ -270,7 +270,7 @@ mod tests {
                 json!({"task": "format this"}),
                 Tier::Fast,
                 "fast",
-                "What is included in 0.6.0?",
+                "What is included in 0.6.1?",
                 Intent::ReadOnly,
             ),
             (

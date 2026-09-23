@@ -1,14 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fmt;
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
-use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
@@ -18,12 +15,11 @@ use serde_json::{Value, json};
 use crate::Result;
 use crate::agent::{self, Harness};
 use crate::apps::Identity;
-use crate::delivery::{self, Config};
-use crate::github::{self, GitHub};
-use crate::quality;
+use crate::code_command::CodeArgs;
+use crate::delivery;
+use crate::github::GitHub;
 use crate::repair;
 use crate::reviews;
-use crate::routing::Intent;
 use crate::session::{self, SessionAnswer, SessionConfig};
 use crate::setup::{self, SourceRef};
 use crate::ui::{OutputMode, Theme, Ui, json_success_document, print_markdown};
@@ -82,7 +78,7 @@ enum Commands {
     /// Run or check a native agent harness
     #[command(
         disable_help_subcommand = true,
-        after_help = "Examples:\n  rady agent ask \"how does this parser work?\"\n  rady agent follow-up RUN_ID \"where is that called?\"\n  rady agent serve\n  rady agent doctor"
+        after_help = "Examples:\n  rady agent ask \"how does this parser work?\"\n  rady agent follow-up RUN_ID \"where is that called?\"\n  rady agent serve --app-client-id CLIENT_ID --app-private-key-file KEY.pem\n  rady agent doctor"
     )]
     Agent {
         #[command(subcommand)]
@@ -105,7 +101,7 @@ enum AgentCommands {
     FollowUp(FollowUpArgs),
 
     /// Keep mention and pull-request review loops running
-    Serve(ServeArgs),
+    Serve(crate::service::ServeArgs),
 
     /// Pass arguments to a native agent harness unchanged
     Run(AgentArgs),
@@ -123,98 +119,10 @@ enum AgentCommands {
     Respond(RespondArgs),
 
     #[command(hide = true)]
-    Sweep(SweepArgs),
+    Sweep(crate::service::SweepArgs),
 
     #[command(hide = true)]
     PrepareRepair(PrepareRepairArgs),
-}
-
-#[derive(Debug, Args)]
-struct CodeArgs {
-    task: Option<String>,
-
-    #[arg(long)]
-    spec: Option<PathBuf>,
-
-    #[arg(long, default_value = ".")]
-    directory: PathBuf,
-
-    #[arg(long)]
-    model: Option<String>,
-
-    #[arg(long = "model-choice", action = clap::ArgAction::Append)]
-    model_choices: Vec<String>,
-
-    #[arg(long)]
-    review_model: Option<String>,
-
-    #[arg(long)]
-    orchestrator_model: Option<String>,
-
-    #[arg(long, value_enum)]
-    orchestrator_harness: Option<Harness>,
-
-    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
-    harness: Harness,
-
-    #[arg(long, default_value_t = 1)]
-    agents: usize,
-
-    #[arg(long)]
-    max_tokens: Option<u64>,
-
-    #[arg(long)]
-    pr: bool,
-
-    #[arg(long)]
-    repo: Option<String>,
-
-    #[arg(long)]
-    base: Option<String>,
-
-    #[arg(long, hide = true)]
-    expected_start: Option<String>,
-
-    #[arg(long = "check", action = clap::ArgAction::Append)]
-    checks: Vec<String>,
-
-    #[arg(long = "benchmark", action = clap::ArgAction::Append)]
-    benchmarks: Vec<String>,
-
-    #[arg(long, default_value_t = 7)]
-    benchmark_runs: usize,
-
-    #[arg(long, default_value_t = 1)]
-    benchmark_warmups: usize,
-
-    #[arg(long)]
-    benchmark_metric: Option<String>,
-
-    #[arg(long, default_value_t = 10.0)]
-    max_benchmark_noise: f64,
-
-    #[arg(long, default_value_t = 5.0)]
-    max_regression: f64,
-
-    #[arg(long, default_value_t = 20)]
-    max_files: usize,
-
-    #[arg(long, default_value_t = 1000)]
-    max_lines: usize,
-
-    #[arg(long, default_value_t = 2)]
-    attempts: usize,
-
-    #[arg(long, default_value_t = 1800)]
-    timeout: u64,
-
-    /// Enable a named MCP server from .rady/context.json for write tasks
-    #[arg(long = "mcp", action = clap::ArgAction::Append)]
-    mcp_servers: Vec<String>,
-
-    /// Keep remote delivery as one final commit instead of task checkpoints
-    #[arg(long)]
-    ghost: bool,
 }
 
 #[derive(Debug, Args)]
@@ -247,29 +155,6 @@ struct FollowUpArgs {
 
     #[arg(long, default_value_t = 300)]
     timeout: u64,
-}
-
-#[derive(Debug, Args)]
-struct ServeArgs {
-    /// Restrict the service to one installed account
-    #[arg(long)]
-    owner: Option<String>,
-
-    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
-    harness: Harness,
-
-    #[arg(long, default_value_t = 30)]
-    interval: u64,
-
-    #[arg(long, default_value_t = 4)]
-    max_reviews: usize,
-
-    /// Privileged local command that prints a fresh App installation token
-    #[arg(long, env = "RADY_APP_TOKEN_COMMAND")]
-    token_command: Option<String>,
-
-    #[arg(long)]
-    once: bool,
 }
 
 #[derive(Debug, Args)]
@@ -361,14 +246,6 @@ struct RespondArgs {
     issue: u64,
     #[arg(long)]
     comment: u64,
-    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
-    harness: Harness,
-}
-
-#[derive(Debug, Args)]
-struct SweepArgs {
-    #[arg(long)]
-    owner: Option<String>,
     #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
     harness: Harness,
 }
@@ -512,7 +389,7 @@ where
     })?;
     let output = cli.output;
     let result = match cli.command {
-        Commands::Code(arguments) => code(*arguments, cli.theme, cli.output),
+        Commands::Code(arguments) => crate::code_command::run(*arguments, cli.theme, cli.output),
         Commands::Dependasolve(arguments) => dependasolve(arguments, cli.theme, cli.output),
         Commands::Runs => delivery::list_runs(cli.theme, cli.output),
         Commands::Inspect(arguments) => {
@@ -527,13 +404,13 @@ where
         Commands::Agent { command } => match command {
             AgentCommands::Ask(arguments) => ask(arguments, cli.theme, cli.output),
             AgentCommands::FollowUp(arguments) => follow_up(arguments, cli.theme, cli.output),
-            AgentCommands::Serve(arguments) => serve(arguments),
+            AgentCommands::Serve(arguments) => crate::service::serve(arguments),
             AgentCommands::Run(arguments) => native_agent(arguments),
             AgentCommands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
             AgentCommands::Resolve(arguments) => resolve(arguments),
             AgentCommands::Review(arguments) => review(arguments),
             AgentCommands::Respond(arguments) => respond(arguments),
-            AgentCommands::Sweep(arguments) => sweep(arguments),
+            AgentCommands::Sweep(arguments) => crate::service::sweep(arguments),
             AgentCommands::PrepareRepair(arguments) => prepare_repair(arguments),
         },
         Commands::Resolve(arguments) => resolve(arguments),
@@ -558,81 +435,6 @@ fn requested_output(arguments: &[OsString]) -> OutputMode {
         }
     }
     output
-}
-
-fn code(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
-    let request = quality::load_request(arguments.task.as_deref(), arguments.spec.as_deref())?;
-    let conversational = arguments.spec.is_none()
-        && !arguments.pr
-        && arguments.repo.is_none()
-        && arguments.base.is_none()
-        && arguments.expected_start.is_none()
-        && arguments.checks.is_empty()
-        && arguments.benchmarks.is_empty()
-        && arguments.mcp_servers.is_empty()
-        && !arguments.ghost
-        && request.plan.is_none()
-        && request.checks.is_empty()
-        && request.benchmarks.is_empty()
-        && request.acceptance_checks.is_empty();
-    if conversational {
-        let config = SessionConfig {
-            directory: arguments.directory.clone(),
-            harness: arguments.harness,
-            model: arguments.model.clone(),
-            timeout: Duration::from_secs(arguments.timeout.min(300)),
-        };
-        if session::classify_request(&request.task, &config) == Intent::ReadOnly {
-            let answer = session::ask(&request.task, &config)?;
-            return print_session("ask", &answer, theme, output);
-        }
-    }
-    let checks = resolve_checks(
-        deduplicate(request.checks.into_iter().chain(arguments.checks)),
-        &arguments.directory,
-    )?;
-    let benchmarks = deduplicate(request.benchmarks.into_iter().chain(arguments.benchmarks));
-    if arguments.pr && arguments.repo.is_none() {
-        bail!("--pr requires --repo");
-    }
-    if arguments.repo.is_some() && !arguments.pr {
-        bail!("--repo requires --pr");
-    }
-    delivery::deliver(Config {
-        task: request.task,
-        directory: arguments.directory,
-        repo: arguments.pr.then_some(arguments.repo).flatten(),
-        checks,
-        harness: arguments.harness,
-        agents: arguments.agents,
-        model: arguments.model,
-        model_choices: arguments.model_choices,
-        review_model: arguments.review_model,
-        plan: request.plan,
-        acceptance_checks: request.acceptance_checks,
-        max_tokens: arguments.max_tokens,
-        orchestrator_model: arguments.orchestrator_model,
-        orchestrator_harness: arguments.orchestrator_harness,
-        base: arguments.base,
-        attempts: arguments.attempts,
-        timeout: Duration::from_secs(arguments.timeout),
-        benchmarks,
-        benchmark_runs: arguments.benchmark_runs,
-        benchmark_warmups: arguments.benchmark_warmups,
-        benchmark_metric: arguments.benchmark_metric,
-        max_benchmark_noise: arguments.max_benchmark_noise,
-        max_regression: arguments.max_regression,
-        max_files: arguments.max_files,
-        max_lines: arguments.max_lines,
-        seed_patch: None,
-        resumed_from: None,
-        expected_start: arguments.expected_start,
-        mcp_servers: arguments.mcp_servers,
-        ghost: arguments.ghost,
-        theme,
-        output,
-    })?;
-    Ok(())
 }
 
 fn ask(arguments: AskArgs, theme: Theme, output: OutputMode) -> Result<()> {
@@ -662,7 +464,7 @@ fn follow_up(arguments: FollowUpArgs, theme: Theme, output: OutputMode) -> Resul
     print_session("follow_up", &answer, theme, output)
 }
 
-fn print_session(
+pub(crate) fn print_session(
     kind: &str,
     answer: &SessionAnswer,
     theme: Theme,
@@ -687,67 +489,6 @@ fn print_session(
         answer.id
     ));
     print_markdown(&markdown, theme)
-}
-
-fn resolve_checks(checks: Vec<String>, directory: &Path) -> Result<Vec<String>> {
-    let needs_project_check = checks.is_empty() || checks.iter().any(|check| check == "test");
-    if !needs_project_check {
-        return Ok(checks);
-    }
-    let no_checks = checks.is_empty();
-    let project_check = infer_project_check(directory)?;
-    let fallback = no_checks.then(|| project_check.clone());
-    Ok(deduplicate(
-        checks
-            .into_iter()
-            .map(|check| {
-                if check == "test" {
-                    project_check.clone()
-                } else {
-                    check
-                }
-            })
-            .chain(fallback),
-    ))
-}
-
-fn infer_project_check(directory: &Path) -> Result<String> {
-    let present = |marker: &str| directory.join(marker).is_file();
-    let yarn = present("yarn.lock");
-    let pnpm = present("pnpm-lock.yaml");
-    let mut candidates = BTreeSet::new();
-    if present("Cargo.toml") {
-        candidates.insert("cargo test");
-    }
-    if present("go.mod") {
-        candidates.insert("go test ./...");
-    }
-    if pnpm {
-        candidates.insert("pnpm test");
-    }
-    if yarn {
-        candidates.insert("yarn test");
-    }
-    if present("package-lock.json") || (present("package.json") && !yarn && !pnpm) {
-        candidates.insert("npm test");
-    }
-    if present("pyproject.toml") || present("pytest.ini") || present("tox.ini") {
-        candidates.insert("pytest");
-    }
-    match candidates.len() {
-        1 => Ok(candidates
-            .pop_first()
-            .expect("one candidate exists")
-            .to_owned()),
-        0 => bail!(
-            "could not infer a project test command from {}; add --check \"...\"",
-            directory.display()
-        ),
-        _ => bail!(
-            "found multiple project test commands in {}; add --check \"...\"",
-            directory.display()
-        ),
-    }
 }
 
 fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) -> Result<()> {
@@ -956,384 +697,6 @@ fn respond(arguments: RespondArgs) -> Result<()> {
     )
 }
 
-const MAX_SWEEP_FAILURES: usize = 8;
-const SERVICE_TOKEN_ENVIRONMENT: &[&str] = &[
-    "RADY_APP_PRIVATE_KEY",
-    "RADY_APP_CLIENT_ID",
-    "RADY_APP_ID",
-    "RADY_APP_SLUG",
-];
-
-fn sweep(arguments: SweepArgs) -> Result<()> {
-    let token = env::var("GH_TOKEN").unwrap_or_default();
-    sweep_with_token(&arguments, &token, &mut BTreeMap::new())
-}
-
-fn sweep_with_token(
-    arguments: &SweepArgs,
-    token: &str,
-    cursors: &mut BTreeMap<String, u64>,
-) -> Result<()> {
-    validate_owner_filter(arguments.owner.as_deref())?;
-    let repositories =
-        github::authenticated_pages("installation/repositories", "repositories", token)?;
-
-    let model = env::var("RADY_MODEL")
-        .ok()
-        .filter(|value| !value.is_empty());
-    let mut failures = Vec::new();
-    let visible = repositories
-        .iter()
-        .filter_map(|repository| repository["full_name"].as_str())
-        .filter(|name| github::validate_repository(name).is_ok())
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    cursors.retain(|name, _| visible.contains(name));
-    let mut repositories = repositories.iter().collect::<Vec<_>>();
-    repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
-    for repository in repositories {
-        if repository["archived"].as_bool() == Some(true)
-            || repository["disabled"].as_bool() == Some(true)
-        {
-            continue;
-        }
-        let Some(name) = repository["full_name"].as_str().filter(|name| {
-            owner_matches(repository, arguments.owner.as_deref())
-                && github::validate_repository(name).is_ok()
-        }) else {
-            continue;
-        };
-        let private = repository["private"].as_bool();
-        let github = GitHub::new(name, token)?;
-        let accepted = match github
-            .raw_optional("contents/.github/rady.json")?
-            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-        {
-            Some(configuration) => match setup::verified_configuration(&github, &configuration) {
-                Ok(accepted) => accepted,
-                Err(error) => {
-                    record_sweep_failure(&mut failures, name, &error);
-                    continue;
-                }
-            },
-            None => false,
-        };
-        if !accepted {
-            continue;
-        }
-        let comments = match github.pages_after_id(
-            "issues/comments?sort=created&direction=desc",
-            cursors.get(name).copied(),
-        ) {
-            Ok(value) => value,
-            Err(error) => {
-                record_sweep_failure(&mut failures, name, &error);
-                continue;
-            }
-        };
-        let mut repo_failed = false;
-        for comment in &comments {
-            let Some(body) = comment["body"].as_str().filter(|body| {
-                matches!(
-                    comment["author_association"].as_str(),
-                    Some("OWNER" | "MEMBER" | "COLLABORATOR")
-                ) && crate::mentions::is_invocation(body)
-            }) else {
-                continue;
-            };
-            let (Some(comment_id), Some(issue)) = (
-                comment["id"].as_u64(),
-                comment_issue(name, comment["issue_url"].as_str().unwrap_or_default()),
-            ) else {
-                record_sweep_failure(
-                    &mut failures,
-                    name,
-                    &anyhow!("GitHub returned an invalid mention comment"),
-                );
-                repo_failed = true;
-                continue;
-            };
-            let _ = body;
-            if let Err(error) = crate::mentions::respond_for_repository(
-                &github,
-                issue,
-                comment_id,
-                model.as_deref(),
-                arguments.harness,
-                private,
-            ) {
-                record_sweep_failure(&mut failures, name, &error);
-                repo_failed = true;
-            }
-        }
-        if !repo_failed {
-            if let Some(last) = comments
-                .iter()
-                .filter_map(|comment| comment["id"].as_u64())
-                .max()
-            {
-                cursors.insert(name.to_owned(), last);
-            }
-        }
-    }
-    if failures.is_empty() {
-        return Ok(());
-    }
-    bail!(
-        "central sweep had {} failure(s): {}",
-        failures.len(),
-        failures.join("; ")
-    )
-}
-
-fn comment_issue(repo: &str, issue_url: &str) -> Option<u64> {
-    let prefix = format!("https://api.github.com/repos/{repo}/issues/");
-    issue_url
-        .strip_prefix(&prefix)?
-        .parse::<u64>()
-        .ok()
-        .filter(|number| *number > 0)
-}
-
-fn record_sweep_failure(failures: &mut Vec<String>, repo: &str, error: &anyhow::Error) {
-    if failures.len() < MAX_SWEEP_FAILURES {
-        failures.push(format!("{repo}: {error}"));
-    }
-}
-
-fn validate_owner_filter(owner: Option<&str>) -> Result<()> {
-    if let Some(owner) = owner {
-        github::validate_repository(&format!("{owner}/rady"))?;
-    }
-    Ok(())
-}
-
-fn owner_matches(repository: &Value, owner: Option<&str>) -> bool {
-    owner.is_none_or(|owner| {
-        repository["owner"]["login"]
-            .as_str()
-            .is_some_and(|login| login.eq_ignore_ascii_case(owner))
-    })
-}
-
-fn serve(arguments: ServeArgs) -> Result<()> {
-    validate_owner_filter(arguments.owner.as_deref())?;
-    if !(5..=3_600).contains(&arguments.interval) || !(1..=16).contains(&arguments.max_reviews) {
-        bail!("use a service interval from 5 to 3600 seconds and 1-16 reviews per cycle");
-    }
-    let mut consecutive_failures = 0_u8;
-    let mut mention_cursors = BTreeMap::new();
-    loop {
-        let cycle = service_cycle(&arguments, &mut mention_cursors);
-        if let Ok(reviewed) = &cycle {
-            consecutive_failures = 0;
-            eprintln!(
-                "Rady service cycle complete · {} new pull request review(s)",
-                reviewed
-            );
-        } else {
-            consecutive_failures = consecutive_failures.saturating_add(1);
-            eprintln!(
-                "Rady service cycle needs attention: {}",
-                cycle.as_ref().unwrap_err()
-            );
-        }
-        if arguments.once {
-            return cycle.map(|_| ());
-        }
-        if consecutive_failures >= 3 {
-            bail!("persistent service stopped after three failed cycles");
-        }
-        thread::sleep(Duration::from_secs(arguments.interval));
-    }
-}
-
-fn service_cycle(
-    arguments: &ServeArgs,
-    mention_cursors: &mut BTreeMap<String, u64>,
-) -> Result<usize> {
-    let token = service_token(arguments)?;
-    let mentions = sweep_with_token(
-        &SweepArgs {
-            owner: arguments.owner.clone(),
-            harness: arguments.harness,
-        },
-        &token,
-        mention_cursors,
-    );
-    let reviews = service_reviews(arguments, &token);
-    match (mentions, reviews) {
-        (Ok(()), Ok(reviewed)) => Ok(reviewed),
-        (Err(mention), Ok(_)) => Err(mention),
-        (Ok(()), Err(review)) => Err(review),
-        (Err(mention), Err(review)) => {
-            bail!("mention sweep: {mention}; pull-request sweep: {review}")
-        }
-    }
-}
-
-fn service_token(arguments: &ServeArgs) -> Result<String> {
-    let token = if let Some(command) = arguments.token_command.as_deref() {
-        let parts = agent::split_command(command)?;
-        let (program, arguments) = parts
-            .split_first()
-            .ok_or_else(|| anyhow!("token command is empty"))?;
-        let program = agent::which(program)
-            .ok_or_else(|| anyhow!("token command executable is not installed"))?;
-        let output = agent::execute(
-            program.as_os_str(),
-            arguments,
-            Path::new("."),
-            b"",
-            Duration::from_secs(30),
-            &service_token_environment(),
-            false,
-            None,
-        )?;
-        if output.code != 0 {
-            bail!("token command failed; no GitHub request was made");
-        }
-        output.stdout.trim().to_owned()
-    } else {
-        env::var("GH_TOKEN").unwrap_or_default()
-    };
-    if token.is_empty() || token.len() > 8_192 || !token.bytes().all(|byte| byte.is_ascii_graphic())
-    {
-        bail!("provide a valid App installation token or --token-command");
-    }
-    Ok(token)
-}
-
-fn service_token_environment() -> std::collections::BTreeMap<String, String> {
-    SERVICE_TOKEN_ENVIRONMENT
-        .iter()
-        .copied()
-        .filter_map(|name| env::var(name).ok().map(|value| (name.to_owned(), value)))
-        .collect()
-}
-
-fn service_reviews(arguments: &ServeArgs, token: &str) -> Result<usize> {
-    let repositories =
-        github::authenticated_pages("installation/repositories", "repositories", token)?;
-    let model = env::var("RADY_MODEL")
-        .ok()
-        .filter(|value| !value.is_empty());
-    let slug = env::var("RADY_APP_SLUG")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "radyybot".to_owned());
-    let mut reviewed = 0;
-    let mut failures = Vec::new();
-    let mut repositories = repositories.iter().collect::<Vec<_>>();
-    repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
-    'repositories: for repository in repositories {
-        if repository["archived"].as_bool() == Some(true)
-            || repository["disabled"].as_bool() == Some(true)
-        {
-            continue;
-        }
-        let Some(name) = repository["full_name"].as_str().filter(|name| {
-            owner_matches(repository, arguments.owner.as_deref())
-                && github::validate_repository(name).is_ok()
-        }) else {
-            continue;
-        };
-        let private = repository["private"].as_bool();
-        let github = GitHub::new(name, token)?;
-        let configuration = match github
-            .raw_optional("contents/.github/rady.json")?
-            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
-        {
-            Some(configuration) if setup::verified_configuration(&github, &configuration)? => {
-                configuration
-            }
-            _ => continue,
-        };
-        let Some(checks) = configuration["checks"].as_array().map(|checks| {
-            checks
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        }) else {
-            continue;
-        };
-        if checks.is_empty()
-            || checks.len() > 32
-            || checks.iter().any(|check| {
-                check.is_empty() || check.len() > 200 || check.starts_with("Rady dependasolve")
-            })
-        {
-            record_sweep_failure(
-                &mut failures,
-                name,
-                &anyhow!(".github/rady.json has invalid CI evidence names"),
-            );
-            continue;
-        }
-        let pulls = match github.pages("pulls?state=open&sort=created&direction=asc", None) {
-            Ok(pulls) => pulls,
-            Err(error) => {
-                record_sweep_failure(&mut failures, name, &error);
-                continue;
-            }
-        };
-        for pull in pulls {
-            if reviewed >= arguments.max_reviews {
-                break 'repositories;
-            }
-            let eligible_author = pull["user"]["login"] == "dependabot[bot]"
-                || matches!(
-                    pull["author_association"].as_str(),
-                    Some("OWNER" | "MEMBER" | "COLLABORATOR")
-                );
-            if pull["draft"].as_bool() != Some(false)
-                || pull["base"]["repo"]["full_name"] != name
-                || pull["head"]["repo"]["full_name"] != name
-                || !eligible_author
-            {
-                continue;
-            }
-            let (Some(number), Some(head)) =
-                (pull["number"].as_u64(), pull["head"]["sha"].as_str())
-            else {
-                record_sweep_failure(
-                    &mut failures,
-                    name,
-                    &anyhow!("GitHub returned an invalid pull request"),
-                );
-                continue;
-            };
-            match reviews::review_pr(
-                &github,
-                number,
-                &checks,
-                model.as_deref(),
-                &slug,
-                arguments.harness,
-                private,
-                "",
-                "",
-                "",
-                head,
-                Duration::ZERO,
-            ) {
-                Ok(outcome) => reviewed += usize::from(outcome.published),
-                Err(error) => record_sweep_failure(&mut failures, name, &error),
-            }
-        }
-    }
-    if failures.is_empty() {
-        Ok(reviewed)
-    } else {
-        bail!(
-            "persistent review had {} failure(s): {}",
-            failures.len(),
-            failures.join("; ")
-        )
-    }
-}
-
 fn prepare_repair(arguments: PrepareRepairArgs) -> Result<()> {
     if arguments.pr == 0 {
         bail!("PR number must be positive");
@@ -1362,14 +725,6 @@ fn action_output(values: &[(&str, String)]) -> Result<()> {
         println!("{}", serde_json::to_string(&value)?);
     }
     Ok(())
-}
-
-fn deduplicate(values: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    values
-        .into_iter()
-        .filter(|value| seen.insert(value.clone()))
-        .collect()
 }
 
 #[cfg(test)]
@@ -1417,59 +772,6 @@ mod tests {
     }
 
     #[test]
-    fn deduplication_preserves_first_seen_order() {
-        assert_eq!(
-            deduplicate(["test".to_owned(), "lint".to_owned(), "test".to_owned()]),
-            ["test", "lint"]
-        );
-    }
-
-    #[test]
-    fn code_accepts_the_hidden_pinned_start_revision() {
-        let expected_start = "a".repeat(40);
-        let cli = Cli::try_parse_from([
-            "rady".to_owned(),
-            "code".to_owned(),
-            "repair dependency conflict".to_owned(),
-            "--expected-start".to_owned(),
-            expected_start.clone(),
-        ])
-        .expect("workflow revision must parse");
-        let Commands::Code(arguments) = cli.command else {
-            panic!("code command expected");
-        };
-        assert_eq!(
-            arguments.expected_start.as_deref(),
-            Some(expected_start.as_str())
-        );
-    }
-
-    #[test]
-    fn project_check_inference_avoids_the_posix_test_command() {
-        for (marker, expected) in [
-            ("Cargo.toml", "cargo test"),
-            ("go.mod", "go test ./..."),
-            ("package.json", "npm test"),
-            ("yarn.lock", "yarn test"),
-            ("pnpm-lock.yaml", "pnpm test"),
-            ("pyproject.toml", "pytest"),
-        ] {
-            let directory = tempfile::tempdir().expect("temporary directory");
-            std::fs::write(directory.path().join(marker), "").expect("project marker");
-            assert_eq!(
-                resolve_checks(vec!["test".to_owned()], directory.path())
-                    .expect("marker must infer a project check"),
-                [expected]
-            );
-        }
-
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let error = resolve_checks(Vec::new(), directory.path())
-            .expect_err("unknown projects need an explicit check");
-        assert!(error.to_string().contains("add --check \"...\""));
-    }
-
-    #[test]
     fn parser_accepts_agent_hierarchy_and_dependasolve_check_aliases() {
         for arguments in [
             vec![
@@ -1499,7 +801,18 @@ mod tests {
                 "run_0123456789abcdef0123456789abcdef",
                 "Why?",
             ],
-            vec!["rady", "agent", "serve", "--once"],
+            vec![
+                "rady",
+                "agent",
+                "serve",
+                "--owner",
+                "keys-i",
+                "--app-client-id",
+                "Iv1.abc",
+                "--app-private-key-file",
+                "/secure/radyybot.pem",
+                "--once",
+            ],
             vec![
                 "rady",
                 "agent",
@@ -1563,43 +876,6 @@ mod tests {
         assert!(arguments.solver_ref.is_none());
         assert!(arguments.no_overwrite);
         assert_eq!(arguments.identity, Identity::Rady);
-    }
-
-    #[test]
-    fn central_sweep_accepts_only_canonical_issue_urls() {
-        for (repo, url, expected) in [
-            (
-                "keys-i/rady",
-                "https://api.github.com/repos/keys-i/rady/issues/42",
-                Some(42),
-            ),
-            (
-                "keys-i/rady",
-                "https://api.github.com/repos/other/rady/issues/42",
-                None,
-            ),
-            (
-                "keys-i/rady",
-                "https://api.github.com/repos/keys-i/rady/issues/0",
-                None,
-            ),
-            ("keys-i/rady", "not-a-url", None),
-        ] {
-            assert_eq!(comment_issue(repo, url), expected, "{url}");
-        }
-    }
-
-    #[test]
-    fn service_boundaries_are_narrow_and_cross_owner() {
-        let repository = json!({"owner": {"login": "Keys-I"}});
-        assert!(owner_matches(&repository, None));
-        assert!(owner_matches(&repository, Some("keys-i")));
-        assert!(!owner_matches(&repository, Some("other")));
-        assert!(validate_owner_filter(Some("keys-i")).is_ok());
-        assert!(validate_owner_filter(Some("bad owner")).is_err());
-        assert!(SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_APP_PRIVATE_KEY"));
-        assert!(!SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_GEMINI_API_KEY"));
-        assert!(!SERVICE_TOKEN_ENVIRONMENT.contains(&"GH_TOKEN"));
     }
 
     #[test]
