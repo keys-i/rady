@@ -10,7 +10,7 @@ Use this repository's **Security** tab → **Report a vulnerability**. Do not op
 
 For the hosted `keys-i` service, App credentials and model keys are GitHub Actions secrets in `keys-i/rady` only. Target repositories receive `.github/rady.json`, never a private key, client ID, model key, or reusable-workflow secret. The central workflow mints short-lived, repository-scoped App tokens.
 
-This arrangement covers App-installed, consented repositories owned by `keys-i` and runs on a five-minute schedule. It is not a general cross-owner or real-time service. Those cases require a hosted backend, a separate secret store, HTTPS webhook verification, and delivery idempotency; do not copy central secrets into another repository to simulate it.
+This arrangement covers every App-installed repository with a valid consent receipt. The scheduled workflow is the deployment fallback. `rady agent serve` can run the same bounded sweeps persistently when a trusted supervisor provides a fresh, short-lived installation token each cycle; `--owner` is an optional account filter. It is polling, not a public webhook endpoint. Real-time hosting still requires a separate secret store, HTTPS webhook verification, and delivery idempotency; do not copy central secrets into another repository to simulate it.
 
 ## Consent and data handling
 
@@ -38,6 +38,10 @@ Use authenticated agent CLIs only on machines and runners you control. `RADY_MOD
 
 Rady blocks known credential and private-key files, works in isolated worktrees, bounds subprocess time and output, and checks protected files before publication. It fails closed when evidence is absent. App tokens are short-lived and are given only to authenticated Git and GitHub API children.
 
-The central service performs read-only review and protected auto-merge on GitHub-hosted runners. It does not expose the App private key or model keys to a persistent self-hosted runner. Conflicted updates remain for an operator to repair with local `rady code`; local credentials and retained evidence stay under that operator's control.
+The persistent service performs read-only reviews. The scheduled workflow alone enables protected auto-merge after verified Dependabot metadata checks. A persistent deployment should use `--token-command` with a dedicated secret broker; Rady holds its bounded stdout token for one cycle and never persists it. Conflicted updates remain for an operator to repair with local `rady code`; local credentials and retained evidence stay under that operator's control.
+
+Repository `AGENTS.md`, `DESIGN.md`, configured skills, issue comments, and MCP definitions are untrusted input. Guidance must be regular, non-symlink UTF-8 files under the repository root and is pinned for the run. Skills are text only. MCP is disabled by default, supports selected local stdio commands only, and runs with credential-shaped environment variables removed. Selecting an MCP server authorises that local program; it is privileged local code, so inspect it first.
+
+Conversation memory is private, atomic, bounded, and stores only the visible questions and answers. It does not store provider keys or hidden reasoning. Progressive commits exist only inside Rady's isolated delivery branch until every gate passes; `--ghost` changes commit shape, not verification.
 
 `RADY_AGENT_COMMAND` and `RADY_REVIEW_COMMAND` are privileged local programs, not sandboxes. Review them and give them the least access possible. Local HTML reports escape raw HTML, neutralise unsafe links, and use no scripts, remote fonts, or network resources. Retained evidence can contain paths, diffs, and command output; protect it accordingly.

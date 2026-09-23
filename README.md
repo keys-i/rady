@@ -16,6 +16,7 @@ Rady is a Rust CLI for checked changes, dependency reviews, and useful GitHub an
 - `rady code` makes an isolated, checked change
 - `rady dependasolve` reviews Dependabot work from its diff and completed CI
 - `@radyybot` gives a short, natural answer grounded in the issue or pull request
+- `rady agent` brings those flows together with local skills, MCP, memory, and follow-ups
 
 Terminal output is concise. Each run keeps a self-contained HTML report with safe Markdown, local maths, themes, and selectable text. Automation can use `--output json`.
 
@@ -29,7 +30,7 @@ brew install keys-i/rady/rady
 After it is published, install the current crate with:
 
 ```sh
-cargo install rady --version 0.5.8 --locked
+cargo install rady --version 0.6.0 --locked
 ```
 
 Build a checkout with Rust 1.85+:
@@ -40,6 +41,35 @@ target/release/rady --help
 ```
 
 Code runs need an authenticated [Codex CLI](https://developers.openai.com/codex/cli/) or [Claude Code](https://docs.anthropic.com/en/docs/claude-code). GitHub setup needs `gh`. `dependasolver` remains a compatibility command for `rady dependasolve`.
+
+## Work with an agent
+
+Rady 0.6.0 adds an agent surface that stays local by default. It reads bounded project guidance from `AGENTS.md` and `DESIGN.md`, loads explicitly listed skills, and can connect selected local stdio MCP servers.
+
+```sh
+rady agent ask "Why does this parser reject empty input?"
+rady agent follow-up RUN_ID "Which test proves that?"
+```
+
+Read-only questions use the repository in place under a read-only harness; they don’t create an edit worktree. Their bounded conversation memory contains questions and answers, never credentials or private model reasoning. Write tasks keep the existing isolated worktree. Remote `--pr` delivery records a checkpoint per completed task; `--ghost` keeps one final verified commit instead.
+
+Skills and MCP are configured explicitly in `.rady/context.json`. Merely opening a repository never starts a server:
+
+```json
+{
+  "schema": 1,
+  "skills": [".rady/skills/rust.md"],
+  "mcp_servers": {
+    "docs": { "command": "docs-mcp", "args": [] }
+  }
+}
+```
+
+Select a server only for a write run with `rady code "..." --mcp docs`. Rady passes no model, GitHub, or App keys to it.
+
+Rady resolves obvious intent without a model, sends only ambiguous decisions to the fastest available classifier, and adds an independent evidence brief before deep hosted answers. Known Gemini, Cerebras, and xAI models are tried first; their bounded catalogues are discovered only when a fallback is needed.
+
+`rady agent serve` keeps mention and review sweeps alive outside Actions for every repository visible to its installation token; add `--owner keys-i` to narrow it. Give it a short-lived `GH_TOKEN`, or use `--token-command "..."` so a trusted local secret broker prints a fresh installation token each cycle. It stops after three failed cycles instead of spinning forever. The scheduled workflow remains a deployment fallback and retains Dependabot’s verified compatibility metadata for protected auto-merge.
 
 ## Make a checked change
 
@@ -60,7 +90,7 @@ rady apply RUN_ID --directory /path/to/project
 
 `apply` verifies the patch and target revision; it does not stage, commit, or publish.
 
-## Add radyybot to a `keys-i` repository
+## Add radyybot to a repository
 
 Install the **radyybot** GitHub App for the repository, read the [Terms](docs/TERMS.md) and [Privacy policy](docs/PRIVACY.md), then preview and accept:
 
@@ -69,9 +99,9 @@ rady dependasolve --repo keys-i/REPO --check test
 rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
 ```
 
-This creates a closed, admin-authored consent receipt and writes its IDs, the policy versions, and selected checks to `.github/rady.json` (and adds Dependabot configuration only when it is missing). Central processing revalidates that receipt and the signer’s current admin access. It does not copy an App key or model key into the target repository. Rady’s central workflow in `keys-i/rady` holds the credentials and scans installed, consented `keys-i` repositories on a five-minute schedule; a reply or review can therefore take five minutes or more.
+This creates a closed, admin-authored consent receipt and writes its IDs, the policy versions, and selected checks to `.github/rady.json` (and adds Dependabot configuration only when it is missing). Central processing revalidates that receipt and the signer’s current admin access. It does not copy an App key or model key into the target repository. Rady’s central workflow in `keys-i/rady` holds the credentials and scans installed, consented `keys-i` repositories on a five-minute schedule; a reply or review can therefore take five minutes or more unless the persistent service is running.
 
-For another owner, or for real-time responses, run a hosted backend with its own secure secret store. GitHub Actions secrets in `keys-i/rady` cannot securely or instantly serve arbitrary owners.
+Replace `keys-i/REPO` with the target repository. Repositories outside `keys-i` need the persistent service with a token that can see that App installation. Real-time responses still need a webhook deployment with its own secure secret store; GitHub Actions secrets in `keys-i/rady` cannot securely or instantly serve arbitrary owners.
 
 `--check` names CI evidence to read. It neither runs a command nor creates a required status check. Dependasolve processes eligible work oldest first and can enable protected auto-merge for a clean, verified update. Conflicted updates remain for local `rady code` repair; the central service never sends its long-lived keys to a self-hosted runner.
 

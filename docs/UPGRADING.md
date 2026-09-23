@@ -1,4 +1,4 @@
-# Upgrading to Rady 0.5.8
+# Upgrading to Rady 0.6.0
 
 Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
@@ -15,11 +15,19 @@ JSON specifications, retained evidence, harness environment variables, and `--ou
 
 `rady code` keeps `run.json` and a self-contained `run.html`; Markdown and LaTeX render locally. Use `--theme dawn|moss|tide|dusk`, or leave `auto` enabled.
 
+## Agent workflows
+
+Rady 0.6.0 adds local skills, opt-in stdio MCP servers, bounded conversation memory, and follow-up questions. Root `AGENTS.md` and `DESIGN.md` are read as pinned guidance for planning, implementation, and review. `.rady/context.json` may list up to 16 skill files and eight MCP servers; no server starts until it is named with `--mcp` on a write run.
+
+Read-only work uses `rady agent ask` and `rady agent follow-up` without creating an edit worktree. Change work remains isolated. Remote pull-request delivery records progressive task checkpoints; pass `--ghost` for one final verified commit. Obvious intent is classified locally, ambiguous intent uses the fast model path, and deep hosted answers chain an evidence brief into the final model.
+
+`rady agent serve` keeps mention and review sweeps alive across every repository visible to its installation token; `--owner OWNER` narrows it to one account. Use a short-lived `GH_TOKEN` or a trusted `--token-command` that returns a fresh installation token each cycle. The scheduled Actions workflow remains a fallback and still supplies Dependabot compatibility metadata used by protected auto-merge. Existing `rady code` and `rady dependasolve` behaviour stays available.
+
 ## Central GitHub setup
 
-Rady 0.5.8 uses the public **radyybot** App and one central Actions installation in `keys-i/rady`. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys live there only. They must not be added to target repositories.
+Rady 0.6.0 uses the public **radyybot** App and one central installation in `keys-i/rady`. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys live there only. They must not be added to target repositories.
 
-For a `keys-i` repository, install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then run:
+Install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then run:
 
 ```sh
 rady dependasolve --repo keys-i/REPO --check test
@@ -28,7 +36,9 @@ rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
 
 Setup creates a closed, admin-authored consent receipt and records its IDs, the checked CI names, and policy versions in `.github/rady.json`. Central processing revalidates the receipt and current admin access. Setup creates Dependabot configuration only if none exists and does not alter branch protection. Re-run with `--no-overwrite` when you want setup to refuse an existing generated configuration.
 
-Central Actions checks consented installed repositories every five minutes. That is the secure GitHub-only arrangement for `keys-i` repositories, not instant delivery. A repository owned by someone else, or a real-time service, needs a hosted backend with a dedicated secret manager and verified GitHub webhooks; a reusable workflow cannot read secrets from `keys-i/rady` on behalf of another repository.
+The scheduled central workflow currently targets `keys-i`; other owners use `rady agent serve` with an installation token that can see their repositories.
+
+The current central workflow checks consented installed repositories on its schedule. The persistent service is an additional polling deployment for a trusted host with a dedicated secret manager. Real-time hosting would also need verified GitHub webhooks; a reusable workflow cannot read secrets from `keys-i/rady` on behalf of another repository.
 
 `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` is only for deliberately pinning an older trusted source. Omit it to use the current `keys-i/rady` commit.
 
@@ -50,6 +60,6 @@ These values belong in `keys-i/rady`, not a target repository. See [Security](SE
 
 ## Dependency reviews
 
-Rady reads selected CI evidence; `--check` (and its `--checks` alias) does not run a shell command or make GitHub require a check. Eligible work is processed oldest first. The central service can enable protected auto-merge for a clean, verified update. Conflicted updates remain for local `rady code` repair so long-lived central keys never enter a self-hosted runner.
+Rady reads selected CI evidence; `--check` (and its `--checks` alias) does not run a shell command or make GitHub require a check. Eligible work is processed oldest first. The scheduled workflow can enable protected auto-merge for a clean, verified update after checking Dependabot metadata. The persistent service posts reviews. Conflicted updates remain for local `rady code` repair so long-lived central keys never enter a self-hosted runner.
 
 Native code and repair runs use an authenticated Codex or Claude Code CLI, or an operator-owned adapter. `RADY_MODEL_CHOICES` orders native models from least to most capable and `RADY_MODEL` pins one. Hosted providers answer mentions and perform central read-only review; they do not replace the local code or repair harness.
