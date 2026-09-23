@@ -329,15 +329,6 @@ pub fn install(
     ) {
         bail!("only personal and organisation repositories are supported");
     }
-    if !repo
-        .split_once('/')
-        .is_some_and(|(owner, _)| owner.eq_ignore_ascii_case(apps::APP_OWNER))
-    {
-        bail!(
-            "central GitHub Actions orchestration currently supports repositories owned by {}",
-            apps::APP_OWNER
-        );
-    }
     for workflow in ["orchestrate.yml", "solve.yml"] {
         let source_file = github::api(
             &format!(
@@ -994,6 +985,9 @@ mod tests {
         }
         assert!(orchestrator.contains("target/release/rady agent sweep --owner keys-i"));
         assert!(orchestrator.contains("uses: ./.github/workflows/solve.yml"));
+        assert!(orchestrator.contains(
+            "    permissions:\n      contents: read\n      pull-requests: write\n    strategy:"
+        ));
         assert!(orchestrator.contains("permission-issues: read"));
         assert!(!orchestrator.contains("runs-on: self-hosted"));
         assert!(!solver.contains("runs-on: self-hosted"));

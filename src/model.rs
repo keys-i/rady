@@ -1,4 +1,3 @@
-use std::env;
 use std::path::Path;
 use std::time::Duration;
 
@@ -34,7 +33,12 @@ pub struct ModelReview {
     pub minor: Vec<String>,
 }
 
-pub fn model_review(context: &Value, model: Option<&str>, harness: Harness) -> Result<ModelReview> {
+pub fn model_review(
+    context: &Value,
+    model: Option<&str>,
+    harness: Harness,
+    repository_private: Option<bool>,
+) -> Result<ModelReview> {
     let schema = json!({
         "type": "object", "additionalProperties": false,
         "properties": {
@@ -53,7 +57,7 @@ pub fn model_review(context: &Value, model: Option<&str>, harness: Harness) -> R
             &format!("{STYLE} {INSTRUCTIONS}"),
             &schema,
             routing::select(context),
-            repository_private(),
+            repository_private,
         )?
     } else {
         let directory = tempdir()?;
@@ -80,14 +84,6 @@ pub fn model_review(context: &Value, model: Option<&str>, harness: Harness) -> R
         bail!("model returned an invalid review; nothing was published");
     }
     Ok(review)
-}
-
-fn repository_private() -> Option<bool> {
-    match env::var("RADY_REPOSITORY_PRIVATE").ok()?.as_str() {
-        "true" => Some(true),
-        "false" => Some(false),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

@@ -86,6 +86,36 @@ impl GitHub {
         }
         bail!("GitHub results exceeded the review limit; review manually")
     }
+
+    pub fn pages_after_id(&self, path: &str, after: Option<u64>) -> Result<Vec<Value>> {
+        let mut rows = Vec::new();
+        for page in 1..32 {
+            let separator = if path.contains('?') { '&' } else { '?' };
+            let value = self.api(
+                &format!("{path}{separator}per_page=100&page={page}"),
+                None,
+                "GET",
+            )?;
+            let batch = value
+                .as_array()
+                .ok_or_else(|| anyhow!("GitHub response was not a list"))?;
+            for row in batch {
+                let id = row["id"]
+                    .as_u64()
+                    .ok_or_else(|| anyhow!("GitHub response omitted an item ID"))?;
+                if after.is_some_and(|after| id <= after) {
+                    rows.reverse();
+                    return Ok(rows);
+                }
+                rows.push(row.clone());
+            }
+            if batch.len() < 100 {
+                rows.reverse();
+                return Ok(rows);
+            }
+        }
+        bail!("GitHub results exceeded the review limit; review manually")
+    }
 }
 
 pub fn validate_repository(value: &str) -> Result<()> {
@@ -220,6 +250,43 @@ pub fn api(
     missing: bool,
 ) -> Result<Option<Value>> {
     api_with_token(endpoint, payload, method, missing, None, None)
+}
+
+pub fn api_authenticated(
+    endpoint: &str,
+    payload: Option<&Value>,
+    method: &str,
+    missing: bool,
+    token: &str,
+) -> Result<Option<Value>> {
+    if token.is_empty() {
+        bail!("a GitHub App installation token is required");
+    }
+    api_with_token(endpoint, payload, method, missing, Some(token), None)
+}
+
+pub fn authenticated_pages(endpoint: &str, key: &str, token: &str) -> Result<Vec<Value>> {
+    let mut rows = Vec::new();
+    for page in 1..=32 {
+        let separator = if endpoint.contains('?') { '&' } else { '?' };
+        let value = api_authenticated(
+            &format!("{endpoint}{separator}per_page=100&page={page}"),
+            None,
+            "GET",
+            false,
+            token,
+        )?
+        .ok_or_else(|| anyhow!("GitHub returned no installed repositories"))?;
+        let batch = value
+            .get(key)
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("GitHub response omitted {key}"))?;
+        rows.extend(batch.iter().cloned());
+        if batch.len() < 100 {
+            return Ok(rows);
+        }
+    }
+    bail!("GitHub results exceeded the service limit; narrow the App installation")
 }
 
 pub fn api_cancellable(

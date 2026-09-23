@@ -16,6 +16,7 @@ use crate::model::{INSTRUCTIONS, ModelReview, Risk, model_review};
 pub struct ReviewOutcome {
     pub approved: bool,
     pub enable_auto_merge: bool,
+    pub published: bool,
 }
 
 pub fn resolve(github: &GitHub, number: u64) -> Result<(Value, bool)> {
@@ -657,6 +658,7 @@ pub fn review_pr(
     model: Option<&str>,
     bot_slug: &str,
     harness: Harness,
+    repository_private: Option<bool>,
     score: &str,
     update_type: &str,
     maintainer_changes: &str,
@@ -737,6 +739,7 @@ pub fn review_pr(
         return Ok(ReviewOutcome {
             approved,
             enable_auto_merge: dependency && approved && auto_merge_ready(protection.as_ref()),
+            published: false,
         });
     }
     for previous in own.into_iter().filter(|item| item["state"] == "APPROVED") {
@@ -746,7 +749,7 @@ pub fn review_pr(
             "PUT",
         )?;
     }
-    let result = model_review(&context, model, harness)?;
+    let result = model_review(&context, model, harness, repository_private)?;
     let (current, _) = resolve(github, number)?;
     if current["head"]["sha"] != context["head"] || current["base"]["sha"] != context["base"] {
         bail!("the PR changed during review; rerun on the new commit");
@@ -771,6 +774,7 @@ pub fn review_pr(
     Ok(ReviewOutcome {
         approved,
         enable_auto_merge: approved && dependency && auto_merge_ready(protection.as_ref()),
+        published: true,
     })
 }
 

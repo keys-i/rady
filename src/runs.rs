@@ -16,6 +16,7 @@ use serde::de::DeserializeOwned;
 use crate::Result;
 
 const RUNS_DIRECTORY: &str = "RADY_RUNS_DIR";
+const MEMORY_DIRECTORY: &str = "RADY_MEMORY_DIR";
 const CANCELLED: &str = "cancelled";
 const MAX_LISTED_RUNS: usize = 100;
 
@@ -33,6 +34,10 @@ pub struct RunStore {
 impl RunStore {
     pub fn open() -> Result<Self> {
         Self::at(default_root())
+    }
+
+    pub fn memory() -> Result<Self> {
+        Self::at(memory_root())
     }
 
     pub fn at(root: impl Into<PathBuf>) -> Result<Self> {
@@ -180,6 +185,16 @@ impl Run {
 
 fn default_root() -> PathBuf {
     root_from(|name| env::var_os(name), env::temp_dir())
+}
+
+fn memory_root() -> PathBuf {
+    if let Some(root) = env::var_os(MEMORY_DIRECTORY).filter(|value| !value.is_empty()) {
+        return PathBuf::from(root);
+    }
+    default_root().parent().map_or_else(
+        || env::temp_dir().join("rady-memory"),
+        |root| root.join("memory"),
+    )
 }
 
 fn root_from<F>(variable: F, temporary: PathBuf) -> PathBuf

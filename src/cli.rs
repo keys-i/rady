@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::OsString;
 use std::fmt;
@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
+use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
@@ -22,6 +23,8 @@ use crate::github::{self, GitHub};
 use crate::quality;
 use crate::repair;
 use crate::reviews;
+use crate::routing::Intent;
+use crate::session::{self, SessionAnswer, SessionConfig};
 use crate::setup::{self, SourceRef};
 use crate::ui::{OutputMode, Theme, Ui, json_success_document, print_markdown};
 
@@ -31,7 +34,7 @@ use crate::ui::{OutputMode, Theme, Ui, json_success_document, print_markdown};
     version,
     about = "Human-first, evidence-gated coding and dependency review",
     disable_help_subcommand = true,
-    after_help = "Examples:\n  rady code \"add structured logging\" --check test\n  rady dependasolve --repo owner/repo --check test --apply\n  rady agent doctor"
+    after_help = "Examples:\n  rady code \"add structured logging\" --check test\n  rady agent ask \"why is this test failing?\"\n  rady dependasolve --repo owner/repo --check test --apply"
 )]
 struct Cli {
     #[arg(long, value_enum, global = true, default_value = "auto")]
@@ -79,7 +82,7 @@ enum Commands {
     /// Run or check a native agent harness
     #[command(
         disable_help_subcommand = true,
-        after_help = "Examples:\n  rady agent doctor\n  rady agent run --harness codex -- exec --help"
+        after_help = "Examples:\n  rady agent ask \"how does this parser work?\"\n  rady agent follow-up RUN_ID \"where is that called?\"\n  rady agent serve\n  rady agent doctor"
     )]
     Agent {
         #[command(subcommand)]
@@ -95,6 +98,15 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum AgentCommands {
+    /// Answer a repository question without creating an edit workspace
+    Ask(AskArgs),
+
+    /// Continue a retained repository conversation
+    FollowUp(FollowUpArgs),
+
+    /// Keep mention and pull-request review loops running
+    Serve(ServeArgs),
+
     /// Pass arguments to a native agent harness unchanged
     Run(AgentArgs),
 
@@ -195,6 +207,69 @@ struct CodeArgs {
 
     #[arg(long, default_value_t = 1800)]
     timeout: u64,
+
+    /// Enable a named MCP server from .rady/context.json for write tasks
+    #[arg(long = "mcp", action = clap::ArgAction::Append)]
+    mcp_servers: Vec<String>,
+
+    /// Keep remote delivery as one final commit instead of task checkpoints
+    #[arg(long)]
+    ghost: bool,
+}
+
+#[derive(Debug, Args)]
+struct AskArgs {
+    question: String,
+
+    #[arg(long, default_value = ".")]
+    directory: PathBuf,
+
+    #[arg(long)]
+    model: Option<String>,
+
+    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
+    harness: Harness,
+
+    #[arg(long, default_value_t = 300)]
+    timeout: u64,
+}
+
+#[derive(Debug, Args)]
+struct FollowUpArgs {
+    run: String,
+    question: String,
+
+    #[arg(long)]
+    model: Option<String>,
+
+    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
+    harness: Harness,
+
+    #[arg(long, default_value_t = 300)]
+    timeout: u64,
+}
+
+#[derive(Debug, Args)]
+struct ServeArgs {
+    /// Restrict the service to one installed account
+    #[arg(long)]
+    owner: Option<String>,
+
+    #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
+    harness: Harness,
+
+    #[arg(long, default_value_t = 30)]
+    interval: u64,
+
+    #[arg(long, default_value_t = 4)]
+    max_reviews: usize,
+
+    /// Privileged local command that prints a fresh App installation token
+    #[arg(long, env = "RADY_APP_TOKEN_COMMAND")]
+    token_command: Option<String>,
+
+    #[arg(long)]
+    once: bool,
 }
 
 #[derive(Debug, Args)]
@@ -292,8 +367,8 @@ struct RespondArgs {
 
 #[derive(Debug, Args)]
 struct SweepArgs {
-    #[arg(long, default_value = "keys-i")]
-    owner: String,
+    #[arg(long)]
+    owner: Option<String>,
     #[arg(long, value_enum, env = "RADY_HARNESS", default_value = "codex")]
     harness: Harness,
 }
@@ -450,6 +525,9 @@ where
         }
         Commands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
         Commands::Agent { command } => match command {
+            AgentCommands::Ask(arguments) => ask(arguments, cli.theme, cli.output),
+            AgentCommands::FollowUp(arguments) => follow_up(arguments, cli.theme, cli.output),
+            AgentCommands::Serve(arguments) => serve(arguments),
             AgentCommands::Run(arguments) => native_agent(arguments),
             AgentCommands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
             AgentCommands::Resolve(arguments) => resolve(arguments),
@@ -484,6 +562,31 @@ fn requested_output(arguments: &[OsString]) -> OutputMode {
 
 fn code(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
     let request = quality::load_request(arguments.task.as_deref(), arguments.spec.as_deref())?;
+    let conversational = arguments.spec.is_none()
+        && !arguments.pr
+        && arguments.repo.is_none()
+        && arguments.base.is_none()
+        && arguments.expected_start.is_none()
+        && arguments.checks.is_empty()
+        && arguments.benchmarks.is_empty()
+        && arguments.mcp_servers.is_empty()
+        && !arguments.ghost
+        && request.plan.is_none()
+        && request.checks.is_empty()
+        && request.benchmarks.is_empty()
+        && request.acceptance_checks.is_empty();
+    if conversational {
+        let config = SessionConfig {
+            directory: arguments.directory.clone(),
+            harness: arguments.harness,
+            model: arguments.model.clone(),
+            timeout: Duration::from_secs(arguments.timeout.min(300)),
+        };
+        if session::classify_request(&request.task, &config) == Intent::ReadOnly {
+            let answer = session::ask(&request.task, &config)?;
+            return print_session("ask", &answer, theme, output);
+        }
+    }
     let checks = resolve_checks(
         deduplicate(request.checks.into_iter().chain(arguments.checks)),
         &arguments.directory,
@@ -524,10 +627,66 @@ fn code(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
         seed_patch: None,
         resumed_from: None,
         expected_start: arguments.expected_start,
+        mcp_servers: arguments.mcp_servers,
+        ghost: arguments.ghost,
         theme,
         output,
     })?;
     Ok(())
+}
+
+fn ask(arguments: AskArgs, theme: Theme, output: OutputMode) -> Result<()> {
+    let answer = session::ask(
+        &arguments.question,
+        &SessionConfig {
+            directory: arguments.directory,
+            harness: arguments.harness,
+            model: arguments.model,
+            timeout: Duration::from_secs(arguments.timeout),
+        },
+    )?;
+    print_session("ask", &answer, theme, output)
+}
+
+fn follow_up(arguments: FollowUpArgs, theme: Theme, output: OutputMode) -> Result<()> {
+    let answer = session::follow_up(
+        &arguments.run,
+        &arguments.question,
+        &SessionConfig {
+            directory: PathBuf::from("."),
+            harness: arguments.harness,
+            model: arguments.model,
+            timeout: Duration::from_secs(arguments.timeout),
+        },
+    )?;
+    print_session("follow_up", &answer, theme, output)
+}
+
+fn print_session(
+    kind: &str,
+    answer: &SessionAnswer,
+    theme: Theme,
+    output: OutputMode,
+) -> Result<()> {
+    if output == OutputMode::Json {
+        println!(
+            "{}",
+            json_success_document(kind, &serde_json::to_value(answer)?)?
+        );
+        return Ok(());
+    }
+    let mut markdown = format!("{}\n", answer.answer);
+    if !answer.follow_ups.is_empty() {
+        markdown.push_str("\nYou could ask next:\n\n");
+        for question in &answer.follow_ups {
+            markdown.push_str(&format!("- {}\n", question));
+        }
+    }
+    markdown.push_str(&format!(
+        "\nContinue with `rady agent follow-up {} \"…\"`.\n",
+        answer.id
+    ));
+    print_markdown(&markdown, theme)
 }
 
 fn resolve_checks(checks: Vec<String>, directory: &Path) -> Result<Vec<String>> {
@@ -763,6 +922,11 @@ fn review(arguments: ReviewArgs) -> Result<()> {
             .as_deref(),
         &env::var("APP_SLUG").unwrap_or_default(),
         arguments.harness,
+        match env::var("RADY_REPOSITORY_PRIVATE").ok().as_deref() {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        },
         &env::var("SCORE").unwrap_or_default(),
         &env::var("UPDATE_TYPE").unwrap_or_default(),
         &env::var("MAINTAINER_CHANGES").unwrap_or_default(),
@@ -792,36 +956,39 @@ fn respond(arguments: RespondArgs) -> Result<()> {
     )
 }
 
-const MAX_SWEEP_REPOSITORIES: usize = 100;
-const MAX_SWEEP_COMMENTS: usize = 100;
 const MAX_SWEEP_FAILURES: usize = 8;
+const SERVICE_TOKEN_ENVIRONMENT: &[&str] = &[
+    "RADY_APP_PRIVATE_KEY",
+    "RADY_APP_CLIENT_ID",
+    "RADY_APP_ID",
+    "RADY_APP_SLUG",
+];
 
 fn sweep(arguments: SweepArgs) -> Result<()> {
-    github::validate_repository(&format!("{}/rady", arguments.owner))?;
     let token = env::var("GH_TOKEN").unwrap_or_default();
-    let installation = github::api(
-        &format!("installation/repositories?per_page={MAX_SWEEP_REPOSITORIES}"),
-        None,
-        "GET",
-        false,
-    )?
-    .ok_or_else(|| anyhow!("GitHub returned no installed repositories"))?;
-    let repositories = installation["repositories"]
-        .as_array()
-        .ok_or_else(|| anyhow!("GitHub installation response omitted repositories"))?;
-    if installation["total_count"].as_u64().unwrap_or(u64::MAX)
-        > u64::try_from(repositories.len()).unwrap_or_default()
-        || repositories.len() > MAX_SWEEP_REPOSITORIES
-    {
-        bail!(
-            "Rady's central sweep supports at most {MAX_SWEEP_REPOSITORIES} installed repositories"
-        );
-    }
+    sweep_with_token(&arguments, &token, &mut BTreeMap::new())
+}
+
+fn sweep_with_token(
+    arguments: &SweepArgs,
+    token: &str,
+    cursors: &mut BTreeMap<String, u64>,
+) -> Result<()> {
+    validate_owner_filter(arguments.owner.as_deref())?;
+    let repositories =
+        github::authenticated_pages("installation/repositories", "repositories", token)?;
 
     let model = env::var("RADY_MODEL")
         .ok()
         .filter(|value| !value.is_empty());
     let mut failures = Vec::new();
+    let visible = repositories
+        .iter()
+        .filter_map(|repository| repository["full_name"].as_str())
+        .filter(|name| github::validate_repository(name).is_ok())
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    cursors.retain(|name, _| visible.contains(name));
     let mut repositories = repositories.iter().collect::<Vec<_>>();
     repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
     for repository in repositories {
@@ -831,15 +998,13 @@ fn sweep(arguments: SweepArgs) -> Result<()> {
             continue;
         }
         let Some(name) = repository["full_name"].as_str().filter(|name| {
-            repository["owner"]["login"]
-                .as_str()
-                .is_some_and(|owner| owner.eq_ignore_ascii_case(&arguments.owner))
+            owner_matches(repository, arguments.owner.as_deref())
                 && github::validate_repository(name).is_ok()
         }) else {
             continue;
         };
         let private = repository["private"].as_bool();
-        let github = GitHub::new(name, &token)?;
+        let github = GitHub::new(name, token)?;
         let accepted = match github
             .raw_optional("contents/.github/rady.json")?
             .and_then(|content| serde_json::from_str::<Value>(&content).ok())
@@ -856,10 +1021,9 @@ fn sweep(arguments: SweepArgs) -> Result<()> {
         if !accepted {
             continue;
         }
-        let comments = match github.api(
-            &format!("issues/comments?sort=created&direction=desc&per_page={MAX_SWEEP_COMMENTS}"),
-            None,
-            "GET",
+        let comments = match github.pages_after_id(
+            "issues/comments?sort=created&direction=desc",
+            cursors.get(name).copied(),
         ) {
             Ok(value) => value,
             Err(error) => {
@@ -867,15 +1031,8 @@ fn sweep(arguments: SweepArgs) -> Result<()> {
                 continue;
             }
         };
-        let Some(comments) = comments.as_array() else {
-            record_sweep_failure(
-                &mut failures,
-                name,
-                &anyhow!("GitHub comments response was not a list"),
-            );
-            continue;
-        };
-        for comment in comments.iter().rev() {
+        let mut repo_failed = false;
+        for comment in &comments {
             let Some(body) = comment["body"].as_str().filter(|body| {
                 matches!(
                     comment["author_association"].as_str(),
@@ -893,6 +1050,7 @@ fn sweep(arguments: SweepArgs) -> Result<()> {
                     name,
                     &anyhow!("GitHub returned an invalid mention comment"),
                 );
+                repo_failed = true;
                 continue;
             };
             let _ = body;
@@ -905,6 +1063,16 @@ fn sweep(arguments: SweepArgs) -> Result<()> {
                 private,
             ) {
                 record_sweep_failure(&mut failures, name, &error);
+                repo_failed = true;
+            }
+        }
+        if !repo_failed {
+            if let Some(last) = comments
+                .iter()
+                .filter_map(|comment| comment["id"].as_u64())
+                .max()
+            {
+                cursors.insert(name.to_owned(), last);
             }
         }
     }
@@ -930,6 +1098,239 @@ fn comment_issue(repo: &str, issue_url: &str) -> Option<u64> {
 fn record_sweep_failure(failures: &mut Vec<String>, repo: &str, error: &anyhow::Error) {
     if failures.len() < MAX_SWEEP_FAILURES {
         failures.push(format!("{repo}: {error}"));
+    }
+}
+
+fn validate_owner_filter(owner: Option<&str>) -> Result<()> {
+    if let Some(owner) = owner {
+        github::validate_repository(&format!("{owner}/rady"))?;
+    }
+    Ok(())
+}
+
+fn owner_matches(repository: &Value, owner: Option<&str>) -> bool {
+    owner.is_none_or(|owner| {
+        repository["owner"]["login"]
+            .as_str()
+            .is_some_and(|login| login.eq_ignore_ascii_case(owner))
+    })
+}
+
+fn serve(arguments: ServeArgs) -> Result<()> {
+    validate_owner_filter(arguments.owner.as_deref())?;
+    if !(5..=3_600).contains(&arguments.interval) || !(1..=16).contains(&arguments.max_reviews) {
+        bail!("use a service interval from 5 to 3600 seconds and 1-16 reviews per cycle");
+    }
+    let mut consecutive_failures = 0_u8;
+    let mut mention_cursors = BTreeMap::new();
+    loop {
+        let cycle = service_cycle(&arguments, &mut mention_cursors);
+        if let Ok(reviewed) = &cycle {
+            consecutive_failures = 0;
+            eprintln!(
+                "Rady service cycle complete · {} new pull request review(s)",
+                reviewed
+            );
+        } else {
+            consecutive_failures = consecutive_failures.saturating_add(1);
+            eprintln!(
+                "Rady service cycle needs attention: {}",
+                cycle.as_ref().unwrap_err()
+            );
+        }
+        if arguments.once {
+            return cycle.map(|_| ());
+        }
+        if consecutive_failures >= 3 {
+            bail!("persistent service stopped after three failed cycles");
+        }
+        thread::sleep(Duration::from_secs(arguments.interval));
+    }
+}
+
+fn service_cycle(
+    arguments: &ServeArgs,
+    mention_cursors: &mut BTreeMap<String, u64>,
+) -> Result<usize> {
+    let token = service_token(arguments)?;
+    let mentions = sweep_with_token(
+        &SweepArgs {
+            owner: arguments.owner.clone(),
+            harness: arguments.harness,
+        },
+        &token,
+        mention_cursors,
+    );
+    let reviews = service_reviews(arguments, &token);
+    match (mentions, reviews) {
+        (Ok(()), Ok(reviewed)) => Ok(reviewed),
+        (Err(mention), Ok(_)) => Err(mention),
+        (Ok(()), Err(review)) => Err(review),
+        (Err(mention), Err(review)) => {
+            bail!("mention sweep: {mention}; pull-request sweep: {review}")
+        }
+    }
+}
+
+fn service_token(arguments: &ServeArgs) -> Result<String> {
+    let token = if let Some(command) = arguments.token_command.as_deref() {
+        let parts = agent::split_command(command)?;
+        let (program, arguments) = parts
+            .split_first()
+            .ok_or_else(|| anyhow!("token command is empty"))?;
+        let program = agent::which(program)
+            .ok_or_else(|| anyhow!("token command executable is not installed"))?;
+        let output = agent::execute(
+            program.as_os_str(),
+            arguments,
+            Path::new("."),
+            b"",
+            Duration::from_secs(30),
+            &service_token_environment(),
+            false,
+            None,
+        )?;
+        if output.code != 0 {
+            bail!("token command failed; no GitHub request was made");
+        }
+        output.stdout.trim().to_owned()
+    } else {
+        env::var("GH_TOKEN").unwrap_or_default()
+    };
+    if token.is_empty() || token.len() > 8_192 || !token.bytes().all(|byte| byte.is_ascii_graphic())
+    {
+        bail!("provide a valid App installation token or --token-command");
+    }
+    Ok(token)
+}
+
+fn service_token_environment() -> std::collections::BTreeMap<String, String> {
+    SERVICE_TOKEN_ENVIRONMENT
+        .iter()
+        .copied()
+        .filter_map(|name| env::var(name).ok().map(|value| (name.to_owned(), value)))
+        .collect()
+}
+
+fn service_reviews(arguments: &ServeArgs, token: &str) -> Result<usize> {
+    let repositories =
+        github::authenticated_pages("installation/repositories", "repositories", token)?;
+    let model = env::var("RADY_MODEL")
+        .ok()
+        .filter(|value| !value.is_empty());
+    let slug = env::var("RADY_APP_SLUG")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "radyybot".to_owned());
+    let mut reviewed = 0;
+    let mut failures = Vec::new();
+    let mut repositories = repositories.iter().collect::<Vec<_>>();
+    repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
+    'repositories: for repository in repositories {
+        if repository["archived"].as_bool() == Some(true)
+            || repository["disabled"].as_bool() == Some(true)
+        {
+            continue;
+        }
+        let Some(name) = repository["full_name"].as_str().filter(|name| {
+            owner_matches(repository, arguments.owner.as_deref())
+                && github::validate_repository(name).is_ok()
+        }) else {
+            continue;
+        };
+        let private = repository["private"].as_bool();
+        let github = GitHub::new(name, token)?;
+        let configuration = match github
+            .raw_optional("contents/.github/rady.json")?
+            .and_then(|content| serde_json::from_str::<Value>(&content).ok())
+        {
+            Some(configuration) if setup::verified_configuration(&github, &configuration)? => {
+                configuration
+            }
+            _ => continue,
+        };
+        let Some(checks) = configuration["checks"].as_array().map(|checks| {
+            checks
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        }) else {
+            continue;
+        };
+        if checks.is_empty()
+            || checks.len() > 32
+            || checks.iter().any(|check| {
+                check.is_empty() || check.len() > 200 || check.starts_with("Rady dependasolve")
+            })
+        {
+            record_sweep_failure(
+                &mut failures,
+                name,
+                &anyhow!(".github/rady.json has invalid CI evidence names"),
+            );
+            continue;
+        }
+        let pulls = match github.pages("pulls?state=open&sort=created&direction=asc", None) {
+            Ok(pulls) => pulls,
+            Err(error) => {
+                record_sweep_failure(&mut failures, name, &error);
+                continue;
+            }
+        };
+        for pull in pulls {
+            if reviewed >= arguments.max_reviews {
+                break 'repositories;
+            }
+            let eligible_author = pull["user"]["login"] == "dependabot[bot]"
+                || matches!(
+                    pull["author_association"].as_str(),
+                    Some("OWNER" | "MEMBER" | "COLLABORATOR")
+                );
+            if pull["draft"].as_bool() != Some(false)
+                || pull["base"]["repo"]["full_name"] != name
+                || pull["head"]["repo"]["full_name"] != name
+                || !eligible_author
+            {
+                continue;
+            }
+            let (Some(number), Some(head)) =
+                (pull["number"].as_u64(), pull["head"]["sha"].as_str())
+            else {
+                record_sweep_failure(
+                    &mut failures,
+                    name,
+                    &anyhow!("GitHub returned an invalid pull request"),
+                );
+                continue;
+            };
+            match reviews::review_pr(
+                &github,
+                number,
+                &checks,
+                model.as_deref(),
+                &slug,
+                arguments.harness,
+                private,
+                "",
+                "",
+                "",
+                head,
+                Duration::ZERO,
+            ) {
+                Ok(outcome) => reviewed += usize::from(outcome.published),
+                Err(error) => record_sweep_failure(&mut failures, name, &error),
+            }
+        }
+    }
+    if failures.is_empty() {
+        Ok(reviewed)
+    } else {
+        bail!(
+            "persistent review had {} failure(s): {}",
+            failures.len(),
+            failures.join("; ")
+        )
     }
 }
 
@@ -1090,6 +1491,15 @@ mod tests {
             ],
             vec!["rady", "agent", "run", "--", "exec", "--help"],
             vec!["rady", "agent", "doctor"],
+            vec!["rady", "agent", "ask", "What changed?"],
+            vec![
+                "rady",
+                "agent",
+                "follow-up",
+                "run_0123456789abcdef0123456789abcdef",
+                "Why?",
+            ],
+            vec!["rady", "agent", "serve", "--once"],
             vec![
                 "rady",
                 "agent",
@@ -1120,6 +1530,19 @@ mod tests {
                 "2",
             ],
             vec!["rady", "agent", "sweep", "--owner", "keys-i"],
+            vec![
+                "rady",
+                "code",
+                "fix it",
+                "--check",
+                "test",
+                "--pr",
+                "--repo",
+                "owner/repo",
+                "--mcp",
+                "docs",
+                "--ghost",
+            ],
         ] {
             Cli::try_parse_from(arguments).expect("command must parse");
         }
@@ -1164,6 +1587,19 @@ mod tests {
         ] {
             assert_eq!(comment_issue(repo, url), expected, "{url}");
         }
+    }
+
+    #[test]
+    fn service_boundaries_are_narrow_and_cross_owner() {
+        let repository = json!({"owner": {"login": "Keys-I"}});
+        assert!(owner_matches(&repository, None));
+        assert!(owner_matches(&repository, Some("keys-i")));
+        assert!(!owner_matches(&repository, Some("other")));
+        assert!(validate_owner_filter(Some("keys-i")).is_ok());
+        assert!(validate_owner_filter(Some("bad owner")).is_err());
+        assert!(SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_APP_PRIVATE_KEY"));
+        assert!(!SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_GEMINI_API_KEY"));
+        assert!(!SERVICE_TOKEN_ENVIRONMENT.contains(&"GH_TOKEN"));
     }
 
     #[test]

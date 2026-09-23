@@ -19,6 +19,7 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use crate::Result;
+use crate::context::McpConfiguration;
 
 pub const MAX_OUTPUT: usize = 1_000_000;
 const MAX_STRUCTURED_RESPONSE: usize = 64_000;
@@ -30,6 +31,10 @@ const SENSITIVE_ENVIRONMENT: &[&str] = &[
     "RADY_GEMINI_API_KEY",
     "RADY_CEREBRAS_API_KEY",
     "RADY_XAI_API_KEY",
+    "RADY_APP_PRIVATE_KEY",
+    "RADY_APP_CLIENT_ID",
+    "RADY_APP_ID",
+    "RADY_APP_TOKEN_COMMAND",
     "GH_TOKEN",
     "GITHUB_TOKEN",
     "GH_HOST",
@@ -352,16 +357,48 @@ fn terminate_group(pid: u32, child: &mut std::process::Child) {
 }
 
 fn scrub_environment(command: &mut Command) {
-    for name in SENSITIVE_ENVIRONMENT {
-        command.env_remove(name);
+    for (name, _) in env::vars_os() {
+        if sensitive_environment_name(&name.to_string_lossy()) {
+            command.env_remove(name);
+        }
     }
 }
 
 #[must_use]
 pub fn safe_environment() -> BTreeMap<String, String> {
     env::vars()
-        .filter(|(name, _)| !SENSITIVE_ENVIRONMENT.contains(&name.as_str()))
+        .filter(|(name, _)| !sensitive_environment_name(name))
         .collect()
+}
+
+fn sensitive_environment_name(name: &str) -> bool {
+    let name = name.to_ascii_uppercase();
+    SENSITIVE_ENVIRONMENT.contains(&name.as_str())
+        || name.ends_with("_API_KEY")
+        || name.ends_with("_TOKEN")
+        || name.ends_with("_SECRET")
+        || name.ends_with("_PASSWORD")
+        || name.ends_with("_PRIVATE_KEY")
+        || name.ends_with("_CREDENTIAL")
+        || name.ends_with("_CREDENTIALS")
+        || name.ends_with("_COOKIE")
+        || name.starts_with("AWS_")
+        || name.starts_with("AZURE_")
+        || name.starts_with("GCP_")
+        || name.starts_with("GOOGLE_")
+        || matches!(
+            name.as_str(),
+            "API_KEY"
+                | "TOKEN"
+                | "SECRET"
+                | "PASSWORD"
+                | "PRIVATE_KEY"
+                | "SSH_AUTH_SOCK"
+                | "GIT_ASKPASS"
+                | "GIT_SSH_COMMAND"
+                | "DOCKER_CONFIG"
+                | "NETRC"
+        )
 }
 
 pub fn executable(harness: Harness) -> Result<PathBuf> {
@@ -413,6 +450,7 @@ pub struct AgentCommand {
     pub arguments: Vec<OsString>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn command(
     directory: &Path,
     instructions: &str,
@@ -421,6 +459,7 @@ pub fn command(
     read_only: bool,
     harness: Harness,
     evidence_only: bool,
+    mcp: Option<&McpConfiguration>,
 ) -> Result<AgentCommand> {
     if !directory.is_dir() {
         bail!("coding directory must be a directory");
@@ -448,6 +487,10 @@ pub fn command(
     }
     let mut arguments = Vec::<OsString>::new();
     if harness == Harness::Claude {
+        let mcp_json = mcp.map_or_else(
+            || "{\"mcpServers\":{}}".to_owned(),
+            McpConfiguration::claude_json,
+        );
         arguments.extend(os_strings(&[
             "--print",
             "--no-session-persistence",
@@ -455,7 +498,7 @@ pub fn command(
             instructions,
             "--strict-mcp-config",
             "--mcp-config",
-            "{\"mcpServers\":{}}",
+            &mcp_json,
         ]));
         if read_only {
             arguments.extend(os_strings(&[
@@ -476,8 +519,15 @@ pub fn command(
                 "--tools",
                 tools,
             ]));
+            if let Some(mcp) = mcp {
+                arguments.extend(os_strings(&["--allowedTools", &mcp.claude_allowed_tools()]));
+            }
         }
     } else {
+        let mcp = mcp.map_or_else(
+            || "mcp_servers={}".to_owned(),
+            McpConfiguration::codex_inline_toml,
+        );
         arguments.extend(os_strings(&[
             "exec",
             "--sandbox",
@@ -502,6 +552,8 @@ pub fn command(
             } else {
                 "agents.enabled=false"
             },
+            "-c",
+            &mcp,
         ]));
         if agents > 1 {
             arguments.extend(os_strings(&[
@@ -648,6 +700,7 @@ pub fn evaluate_cancellable(
         true,
         harness,
         evidence_only,
+        None,
     )?;
     let scratch = tempdir().context("could not create response workspace")?;
     let schema_path = scratch.path().join("schema.json");
@@ -1056,6 +1109,10 @@ mod tests {
             "RADY_GEMINI_API_KEY",
             "RADY_CEREBRAS_API_KEY",
             "RADY_XAI_API_KEY",
+            "RADY_APP_PRIVATE_KEY",
+            "RADY_APP_CLIENT_ID",
+            "RADY_APP_ID",
+            "RADY_APP_TOKEN_COMMAND",
             "GH_TOKEN",
             "GITHUB_TOKEN",
             "GH_HOST",
@@ -1066,6 +1123,19 @@ mod tests {
         ] {
             assert!(SENSITIVE_ENVIRONMENT.contains(&name));
             assert!(!values.contains_key(name));
+        }
+        for name in [
+            "ACME_API_KEY",
+            "CLOUD_TOKEN",
+            "AWS_PROFILE",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "SSH_AUTH_SOCK",
+            "DOCKER_CONFIG",
+        ] {
+            assert!(sensitive_environment_name(name), "{name}");
+        }
+        for name in ["HOME", "PATH", "CARGO_HOME", "TOKENIZERS_PARALLELISM"] {
+            assert!(!sensitive_environment_name(name), "{name}");
         }
     }
 

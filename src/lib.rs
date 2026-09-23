@@ -2,6 +2,7 @@ pub mod agent;
 pub mod apps;
 pub mod benchmark;
 pub mod cli;
+pub mod context;
 pub mod delivery;
 pub mod github;
 pub mod mentions;
@@ -11,6 +12,7 @@ pub mod repair;
 pub mod reviews;
 pub mod routing;
 pub mod runs;
+pub mod session;
 pub mod setup;
 pub mod ui;
 
