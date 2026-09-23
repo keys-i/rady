@@ -1,8 +1,8 @@
 # Releasing Rady
 
-`Cargo.toml` and the `rady` entry in `Cargo.lock` name the next package version: `0.6.0`. The release manifest, changelog, and Homebrew formula record only completed releases. They intentionally differ until a tagged release exists.
+`Cargo.toml` and the `rady` entry in `Cargo.lock` name the next package version: `0.6.1`. The release manifest, changelog, and Homebrew formula record only completed releases. They intentionally differ until a tagged release exists.
 
-`0.6.0` is prepared, not released. Release Please owns the release pull request, manifest, changelog, tag, and GitHub release. The release workflow checks out that exact tag and runs `cargo publish --locked`. After the tag exists, update the Homebrew formula to that tag and verify installation. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow.
+`0.6.1` is prepared, not released. Release Please owns the release pull request, manifest, changelog, tag, and GitHub release. The release workflow checks out that exact tag and runs `cargo publish --locked`. After the tag exists, update the Homebrew formula to that tag and verify installation. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow.
 
 ## Historical releases
 

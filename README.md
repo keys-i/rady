@@ -27,10 +27,10 @@ brew tap keys-i/rady https://github.com/keys-i/rady
 brew install keys-i/rady/rady
 ```
 
-After it is published, install the current crate with:
+Install the latest published crate with:
 
 ```sh
-cargo install rady --version 0.6.0 --locked
+cargo install rady --locked
 ```
 
 Build a checkout with Rust 1.85+:
@@ -44,7 +44,7 @@ Code runs need an authenticated [Codex CLI](https://developers.openai.com/codex/
 
 ## Work with an agent
 
-Rady 0.6.0 adds an agent surface that stays local by default. It reads bounded project guidance from `AGENTS.md` and `DESIGN.md`, loads explicitly listed skills, and can connect selected local stdio MCP servers.
+Rady 0.6.1 adds an agent surface that stays local by default. It reads bounded project guidance from `AGENTS.md` and `DESIGN.md`, loads explicitly listed skills, and can connect selected local stdio MCP servers.
 
 ```sh
 rady agent ask "Why does this parser reject empty input?"
@@ -69,7 +69,14 @@ Select a server only for a write run with `rady code "..." --mcp docs`. Rady pas
 
 Rady resolves obvious intent without a model, sends only ambiguous decisions to the fastest available classifier, and adds an independent evidence brief before deep hosted answers. Known Gemini, Cerebras, and xAI models are tried first; their bounded catalogues are discovered only when a fallback is needed.
 
-`rady agent serve` keeps mention and review sweeps alive outside Actions for every repository visible to its installation token; add `--owner keys-i` to narrow it. Give it a short-lived `GH_TOKEN`, or use `--token-command "..."` so a trusted local secret broker prints a fresh installation token each cycle. It stops after three failed cycles instead of spinning forever. The scheduled workflow remains a deployment fallback and retains Dependabot’s verified compatibility metadata for protected auto-merge.
+For a central operator, `rady agent serve` keeps mention and review sweeps alive outside Actions. Start it once with the App credentials held by the service:
+
+```sh
+rady agent serve --app-client-id CLIENT_ID \
+  --app-private-key-file /secure/path/radyybot.pem
+```
+
+Rady discovers App installations, mints short-lived tokens, and refreshes them in memory. One process covers up to 256 installations; use `--owner OWNER` to narrow or shard a larger deployment. It stops after three failed cycles instead of spinning forever. The scheduled workflow remains a deployment fallback and retains Dependabot’s verified compatibility metadata for protected auto-merge.
 
 ## Make a checked change
 
@@ -99,9 +106,9 @@ rady dependasolve --repo keys-i/REPO --check test
 rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
 ```
 
-This creates a closed, admin-authored consent receipt and writes its IDs, the policy versions, and selected checks to `.github/rady.json` (and adds Dependabot configuration only when it is missing). Central processing revalidates that receipt and the signer’s current admin access. It does not copy an App key or model key into the target repository. Rady’s central workflow in `keys-i/rady` holds the credentials and scans installed, consented `keys-i` repositories on a five-minute schedule; a reply or review can therefore take five minutes or more unless the persistent service is running.
+This creates a closed, admin-authored consent receipt and writes its IDs, the policy versions, and selected checks to `.github/rady.json` (and adds Dependabot configuration only when it is missing). Central processing revalidates that receipt and the signer’s current admin access. It does not copy an App key or model key into the target repository.
 
-Replace `keys-i/REPO` with the target repository. Repositories outside `keys-i` need the persistent service with a token that can see that App installation. Real-time responses still need a webhook deployment with its own secure secret store; GitHub Actions secrets in `keys-i/rady` cannot securely or instantly serve arbitrary owners.
+Replace `keys-i/REPO` with the target repository. Once the central service is running, that is all a repository administrator needs: install **radyybot**, then run the setup command. The central operator—not each repository—stores the App and model credentials. The service polls every installation; instant event-driven responses would still need a verified webhook deployment.
 
 `--check` names CI evidence to read. It neither runs a command nor creates a required status check. Dependasolve processes eligible work oldest first and can enable protected auto-merge for a clean, verified update. Conflicted updates remain for local `rady code` repair; the central service never sends its long-lived keys to a self-hosted runner.
 
