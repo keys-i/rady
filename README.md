@@ -69,7 +69,9 @@ Select a server only for a write run with `rady code "..." --mcp docs`. Rady pas
 
 Rady resolves obvious intent without a model, sends only ambiguous decisions to the fastest available classifier, and adds an independent evidence brief before deep hosted answers. Known Gemini, Cerebras, and xAI models are tried first; their bounded catalogues are discovered only when a fallback is needed.
 
-For a central operator, `rady agent serve` keeps mention and review sweeps alive outside Actions. Start it once with the App credentials held by the service:
+The central `keys-i/rady` orchestration workflow is the normal service host. It discovers installed radyybot Apps, mints short-lived installation tokens, and polls consented repositories every five minutes. No workflow or secret is installed in a target repository.
+
+`rady agent serve` is the self-hosted alternative for an operator who needs a continuously running service:
 
 ```sh
 rady agent serve --app-client-id CLIENT_ID \
@@ -99,18 +101,23 @@ rady apply RUN_ID --directory /path/to/project
 
 ## Add radyybot to a repository
 
-Install the **radyybot** GitHub App for the repository, read the [Terms](docs/TERMS.md) and [Privacy policy](docs/PRIVACY.md), then preview and accept:
+This is one guided setup, not a secret-distribution exercise.
+
+1. Install the **radyybot** GitHub App for the repository.
+2. Read the [Terms](docs/TERMS.md) and [Privacy policy](docs/PRIVACY.md).
+3. Run the guided setup:
 
 ```sh
-rady dependasolve --repo keys-i/REPO --check test
-rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
+rady setup
 ```
 
-This creates a closed, admin-authored consent receipt and writes its IDs, the policy versions, and selected checks to `.github/rady.json` (and adds Dependabot configuration only when it is missing). Central processing revalidates that receipt and the signer’s current admin access. It does not copy an App key or model key into the target repository.
+For automation or a non-interactive shell, use `rady setup --repo keys-i/REPO --check test --accept-terms`. Setup writes the small, public `.github/rady.json` consent configuration and adds Dependabot configuration only when missing. Review and commit those changes. It also creates a closed, admin-authored consent receipt; the central service rechecks that receipt and the signer’s current admin access before doing any work.
 
-Replace `keys-i/REPO` with the target repository. Once the central service is running, that is all a repository administrator needs: install **radyybot**, then run the setup command. The central operator—not each repository—stores the App and model credentials. The service polls every installation; instant event-driven responses would still need a verified webhook deployment.
+Replace `keys-i/REPO` with the target repository. That is all a repository administrator configures. The App and model credentials live only in the trusted `keys-i/rady` service. Rady currently polls, so a mention or update is picked up on the next service cycle; real-time responses would require a verified webhook deployment.
 
 `--check` names CI evidence to read. It neither runs a command nor creates a required status check. Dependasolve processes eligible work oldest first and can enable protected auto-merge for a clean, verified update. Conflicted updates remain for local `rady code` repair; the central service never sends its long-lived keys to a self-hosted runner.
+
+`rady dependasolve` remains the compatibility name for this setup flow.
 
 ## Ask on GitHub
 

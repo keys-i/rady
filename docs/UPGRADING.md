@@ -21,35 +21,36 @@ Rady 0.6.1 adds local skills, opt-in stdio MCP servers, bounded conversation mem
 
 Read-only work uses `rady agent ask` and `rady agent follow-up` without creating an edit worktree. Change work remains isolated. Remote pull-request delivery records progressive task checkpoints; pass `--ghost` for one final verified commit. Obvious intent is classified locally, ambiguous intent uses the fast model path, and deep hosted answers chain an evidence brief into the final model.
 
-The central operator starts one persistent service with the App client ID and private-key file; Rady discovers up to 256 installations and refreshes their tokens itself:
+The central `keys-i/rady` orchestration workflow is the normal service host. It discovers App installations and refreshes their short-lived tokens itself. It polls every five minutes; it is not a webhook service.
+
+An operator who needs a continuously running self-hosted deployment can instead start one persistent service with the App client ID and private-key file:
 
 ```sh
 rady agent serve --app-client-id CLIENT_ID \
   --app-private-key-file /secure/path/radyybot.pem
 ```
 
-Use `--owner OWNER` to narrow the service or shard a larger installation set.
+Use `--owner OWNER` to narrow the self-hosted service or shard a larger installation set.
 
 The scheduled Actions workflow remains a fallback and still supplies Dependabot compatibility metadata used by protected auto-merge. Existing `rady code` and `rady dependasolve` behaviour stays available.
 
 ## Central GitHub setup
 
-Rady 0.6.1 uses the public **radyybot** App and one central service. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys are held by that service, never target repositories.
+Rady 0.6.1 uses the public **radyybot** App and one central service. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys stay in the trusted `keys-i/rady` service, never in a target repository.
 
-Install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then run:
+Install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then use the guided setup:
 
 ```sh
-rady dependasolve --repo keys-i/REPO --check test
-rady dependasolve --repo keys-i/REPO --check test --apply --accept-terms
+rady setup
 ```
 
-Setup creates a closed, admin-authored consent receipt and records its IDs, the checked CI names, and policy versions in `.github/rady.json`. Central processing revalidates the receipt and current admin access. Setup creates Dependabot configuration only if none exists and does not alter branch protection. Re-run with `--no-overwrite` when you want setup to refuse an existing generated configuration.
+For automation or a non-interactive shell, use `rady setup --repo keys-i/REPO --check test --accept-terms`. Setup creates a closed, admin-authored consent receipt and writes its IDs, checked CI names, and policy versions to `.github/rady.json`. Review and make that small public configuration commit. Central processing revalidates the receipt and current admin access. Setup creates Dependabot configuration only if none exists and does not alter branch protection. Re-run with `--no-overwrite` when you want setup to refuse an existing generated configuration.
 
-The scheduled central workflow currently targets `keys-i`. The persistent service covers installed accounts within its bounded installation set; repository consent still gates processing.
+The central workflow covers installed accounts within its bounded installation set; repository consent still gates processing. `rady agent serve` is the self-hosted alternative, not a required target-repository step.
 
-The current central workflow checks consented installed repositories on its schedule. The persistent service is an additional polling deployment for a trusted host with a dedicated secret manager. Repository administrators install the App and run `dependasolve`; they never configure service credentials. Real-time hosting would also need verified GitHub webhooks.
+Repository administrators install the App and run `rady setup`; they never configure service credentials. Polling means work begins on the next cycle. Real-time hosting would also need verified GitHub webhooks.
 
-`--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` is only for deliberately pinning an older trusted source. Omit it to use the current `keys-i/rady` commit.
+`rady dependasolve` remains available for scripts and its `--solver-ref keys-i/rady@40_CHARACTER_COMMIT_SHA` option deliberately pins an older trusted source. Omit it to use the current `keys-i/rady` commit.
 
 ## Mentions and providers
 
