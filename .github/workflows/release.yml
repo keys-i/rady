@@ -33,11 +33,11 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          if baseline_error=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.5.8" --silent 2>&1); then
+          if baseline_error=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.6.2" --silent 2>&1); then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           elif [[ "$baseline_error" == *"HTTP 404"* ]]; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=Release baseline required::Publish v0.5.8 before Release Please"
+            echo "::notice title=Release baseline required::Publish v0.6.2 before Release Please"
           else
             printf '%s\n' "$baseline_error" >&2
             exit 1

@@ -44,7 +44,7 @@ Code runs need an authenticated [Codex CLI](https://developers.openai.com/codex/
 
 ## Work with an agent
 
-Rady 0.6.1 adds an agent surface that stays local by default. It reads bounded project guidance from `AGENTS.md` and `DESIGN.md`, loads explicitly listed skills, and can connect selected local stdio MCP servers.
+Rady's agent surface stays local by default. It reads bounded project guidance from `AGENTS.md` and `DESIGN.md`, loads explicitly listed skills, and can connect selected local stdio MCP servers.
 
 ```sh
 rady agent ask "Why does this parser reject empty input?"
