@@ -1,15 +1,15 @@
 {
   "agreement": {
-    "accepted_at_unix": 1790120174,
+    "accepted_at_unix": 1790289948,
     "accepted_by": "keys-i",
-    "comment": 5786168675,
-    "issue": 16,
-    "privacy": "2026-09-23",
+    "comment": 5823471183,
+    "issue": 21,
+    "privacy": "2026-09-25",
     "terms": "2026-09-23"
   },
   "checks": [
     "test"
   ],
   "schema": 1,
-  "source": "keys-i/rady@6c714f4e0b247a51e09fa218ef9ee323f7f1551c"
+  "source": "keys-i/rady@ef30f57063857e532067a98b785157e11d4132d9"
 }

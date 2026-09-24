@@ -14,9 +14,9 @@ The central workflow runs `rady agent serve --once`, discovers up to 256 App ins
 
 ## Consent and data handling
 
-Before central processing begins, an authorised repository administrator must install radyybot and run `rady setup`. For automation, use `rady setup --repo owner/repo --check test --accept-terms`. Rady creates a closed, admin-authored GitHub consent receipt and stores its IDs, accepting login, time, and current policy versions in the small public `.github/rady.json` configuration. Review and commit it. Central processing revalidates the exact receipt and the signer’s current admin access. A policy-version change pauses processing until it is accepted again. Read the [Terms](TERMS.md) and [Privacy policy](PRIVACY.md).
+Before central processing begins, an authorised repository administrator must install RadDuck and run `rady setup`. For automation, use `rady setup --repo owner/repo --check test --accept-terms`. Rady creates a closed, admin-authored GitHub consent receipt and stores its IDs, accepting login, time, and current policy versions in the small public `.github/rady.json` configuration. Review and commit it. Central processing revalidates the exact receipt and the signer’s current admin access. A policy-version change pauses processing until it is accepted again. Read the [Terms](TERMS.md) and [Privacy policy](PRIVACY.md).
 
-Only `OWNER`, `MEMBER`, and `COLLABORATOR` actors can invoke `@radyybot <prompt>`. A mention produces read-only evidence; it cannot write code, open a pull request, or merge. Comments, pull-request text, checks, diffs, paths, and model output are untrusted input.
+Only `OWNER`, `MEMBER`, and `COLLABORATOR` actors can invoke `@radduck <prompt>`. A mention produces read-only evidence; it cannot write code, open a pull request, or merge. Comments, pull-request text, checks, diffs, paths, and model output are untrusted input.
 
 ## Hosted models
 

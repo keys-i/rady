@@ -13,7 +13,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 pub const APP_OWNER: &str = "keys-i";
-pub const RADYYBOT_SLUG: &str = "radyybot";
+pub const RADDUCK_SLUG: &str = "radduck";
 const DUCK_ROUTE: &str = "/rady-duck.png";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -43,7 +43,7 @@ impl Identity {
     pub const fn slug(self) -> &'static str {
         match self {
             Self::Dependasolver => "dependasolver",
-            Self::Rady => RADYYBOT_SLUG,
+            Self::Rady => RADDUCK_SLUG,
         }
     }
 }
@@ -63,10 +63,10 @@ pub fn manifest(repo: &str, callback: &str, identity: Identity) -> Value {
     json!({
         "name": match identity {
             Identity::Dependasolver => identity.display(),
-            Identity::Rady => "radyybot",
+            Identity::Rady => "RadDuck",
         },
         "url": format!("https://github.com/{repo}"),
-        "description": "Rady reviews dependency updates from their diff and CI evidence, enables protected auto-merge when safe, and answers trusted @radyybot requests.",
+        "description": "Rady reviews dependency updates from their diff and CI evidence, enables protected auto-merge when safe, and answers trusted @radduck requests.",
         "public": true,
         "hook_attributes": {"active": false, "url": format!("https://github.com/{repo}")},
         "redirect_url": callback,
@@ -149,7 +149,7 @@ pub fn open_installation(slug: &str, repo: &str) -> Result<()> {
         bail!("the configured GitHub App slug is invalid");
     }
     let install = format!("https://github.com/apps/{slug}/installations/new");
-    eprintln!("Install radyybot with Only select repositories -> {repo}");
+    eprintln!("Install RadDuck with Only select repositories -> {repo}");
     open_browser(&install);
     Ok(())
 }
@@ -192,7 +192,7 @@ pub fn register_app(repo: &str, identity: Identity) -> Result<Value> {
     let form = setup_page(
         "Connect your repository",
         &format!(
-            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong>. It reviews dependency pull requests, turns on GitHub auto-merge only after the checks pass, and answers trusted collaborators who write <code>@radyybot</code>.</p><dl><div><dt>Administration</dt><dd>Read branch protection and repository settings</dd></div><div><dt>Checks</dt><dd>Read CI results</dd></div><div><dt>Contents</dt><dd>Read changed files and Rady configuration</dd></div><div><dt>Commit statuses</dt><dd>Read legacy status checks</dd></div><div><dt>Issues</dt><dd>Read prompts and post replies</dd></div><div><dt>Pull requests</dt><dd>Read changes and post reviews</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
+            r#"<p>Create the public GitHub App <strong>RadDuck</strong>, owned by <strong>{APP_OWNER}</strong>, for <strong>{}</strong>. It reviews dependency pull requests, turns on GitHub auto-merge only after the checks pass, and answers trusted collaborators who write <code>@radduck</code>.</p><dl><div><dt>Administration</dt><dd>Read branch protection and repository settings</dd></div><div><dt>Checks</dt><dd>Read CI results</dd></div><div><dt>Contents</dt><dd>Read changed files and Rady configuration</dd></div><div><dt>Commit statuses</dt><dd>Read legacy status checks</dd></div><div><dt>Issues</dt><dd>Read prompts and post replies</dd></div><div><dt>Pull requests</dt><dd>Read changes and post reviews</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
             escape_html(repo),
             escape_html(&action),
             escape_html(&serde_json::to_string(&config)?)
@@ -589,12 +589,12 @@ mod tests {
     }
 
     #[test]
-    fn manifest_uses_the_radyybot_name_and_product_description() {
+    fn manifest_uses_the_radduck_name_and_product_description() {
         let manifest = manifest("keys-i/rady", "http://127.0.0.1/callback", Identity::Rady);
-        assert_eq!(manifest["name"], "radyybot");
+        assert_eq!(manifest["name"], "RadDuck");
         assert_eq!(
             manifest["description"],
-            "Rady reviews dependency updates from their diff and CI evidence, enables protected auto-merge when safe, and answers trusted @radyybot requests."
+            "Rady reviews dependency updates from their diff and CI evidence, enables protected auto-merge when safe, and answers trusted @radduck requests."
         );
     }
 

@@ -45,7 +45,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Connect this repository to radyybot
+    /// Connect this repository to RadDuck
     #[command(after_help = "Example:\n  rady setup")]
     Setup(SetupArgs),
 
@@ -476,7 +476,7 @@ fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<(
     });
     ui.stage("Pinning the trusted Rady version");
     let source = SourceRef::resolve(arguments.solver_ref.as_deref())?;
-    ui.stage("Connecting radyybot and saving the setup");
+    ui.stage("Connecting RadDuck and saving the setup");
     ui.finish_progress();
     let preview = setup::run(
         &repository,
@@ -504,7 +504,7 @@ fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<(
         .join("\n");
     print_markdown(
         &format!(
-            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/rady`\n\nNo secrets were added here. If GitHub opened the radyybot installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
+            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/rady`\n\nNo secrets were added here. If GitHub opened the RadDuck installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
             checks.join(", ")
         ),
         theme,
@@ -549,7 +549,7 @@ fn accept_terms(
 
 fn setup_consent_preview(repository: &str, checks: &[String]) -> String {
     format!(
-        "## Before radyybot connects\n\nFor `{repository}`, Rady will:\n\n- verify your admin access and open the radyybot installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/rady.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/rady`. Rady won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
+        "## Before RadDuck connects\n\nFor `{repository}`, Rady will:\n\n- verify your admin access and open the RadDuck installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/rady.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/rady`. Rady won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
         checks.join("`, `"),
         setup::TERMS_URL,
         setup::PRIVACY_URL,
@@ -677,7 +677,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             arguments.checks.join(", "),
             files,
             if arguments.apply {
-                "Your agreement is saved. radyybot will check its access, then handle mentions and pending dependency pull requests."
+                "Your agreement is saved. RadDuck will check its access, then handle mentions and pending dependency pull requests."
             } else {
                 "Read `docs/TERMS.md` and `docs/PRIVACY.md`, then run again with `--apply --accept-terms` if you agree."
             }
@@ -953,7 +953,7 @@ mod tests {
                 "--app-client-id",
                 "Iv1.abc",
                 "--app-private-key-file",
-                "/secure/radyybot.pem",
+                "/secure/radduck.pem",
                 "--once",
             ],
             vec![

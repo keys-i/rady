@@ -2,7 +2,7 @@
 
 Effective 23 September 2026 · version `2026-09-23`
 
-These terms cover the hosted radyybot service maintained through `keys-i/rady`. The MIT licence continues to cover the Rady source code. Installing or running your own copy does not turn that copy into a hosted service from keys-i.
+These terms cover the hosted RadDuck service maintained through `keys-i/rady`. The MIT licence continues to cover the Rady source code. Installing or running your own copy does not turn that copy into a hosted service from keys-i.
 
 ## Your agreement
 

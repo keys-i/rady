@@ -2,13 +2,13 @@
 
 Effective 25 September 2026 · version `2026-09-25`
 
-This policy describes the hosted radyybot service maintained through `keys-i/rady`. A self-hosted Rady operator is responsible for that deployment's privacy practices.
+This policy describes the hosted RadDuck service maintained through `keys-i/rady`. A self-hosted Rady operator is responsible for that deployment's privacy practices.
 
 ## What Rady handles
 
 Rady receives the GitHub account and repository information made available to its installation. That can include usernames, author associations, issue and pull-request text, comments, diffs, filenames, commit identifiers, check results and links. It also creates a closed consent issue and records its IDs, the accepting GitHub login, policy versions and acceptance time in `.github/rady.json`.
 
-Rady uses this information to authenticate requests, answer `@radyybot` mentions, review eligible pull requests, prevent duplicate work, diagnose failures and protect the service. It does not sell personal information or use repository content to advertise to you.
+Rady uses this information to authenticate requests, answer `@radduck` mentions, review eligible pull requests, prevent duplicate work, diagnose failures and protect the service. It does not sell personal information or use repository content to advertise to you.
 
 ## Where information goes
 

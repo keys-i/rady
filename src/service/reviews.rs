@@ -24,7 +24,7 @@ pub(super) fn service_reviews(
     let slug = env::var("RADY_APP_SLUG")
         .ok()
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "radyybot".to_owned());
+        .unwrap_or_else(|| "radduck".to_owned());
     let mut reviewed = 0;
     let mut failures = Vec::new();
     let mut repositories = repositories.iter().collect::<Vec<_>>();

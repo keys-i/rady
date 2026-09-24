@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
       - name: Build trusted Rady
         run: cargo build --release --locked --bin rady
-      - name: Process consented radyybot work
+      - name: Process consented RadDuck work
         env:
           RADY_APP_CLIENT_ID: ${{ vars.RADY_APP_CLIENT_ID }}
           RADY_APP_PRIVATE_KEY: ${{ secrets.RADY_APP_PRIVATE_KEY }}

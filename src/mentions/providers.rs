@@ -797,8 +797,8 @@ mod tests {
         assert!(valid_model_identifier("@cf/openai/gpt-oss-120b"));
         assert!(valid_model_identifier("meta-llama/llama-4:free"));
         assert!(!valid_model_identifier("https://provider.invalid/model"));
-        assert!(valid_slug("radyybot"));
-        assert!(!valid_slug("radyybot/model"));
+        assert!(valid_slug("radduck"));
+        assert!(!valid_slug("radduck/model"));
     }
 
     #[test]

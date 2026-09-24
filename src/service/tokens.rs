@@ -312,7 +312,7 @@ mod tests {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
 
         let temporary = tempfile::tempdir()?;
-        let key = temporary.path().join("radyybot.pem");
+        let key = temporary.path().join("radduck.pem");
         fs::write(&key, "private key")?;
         fs::set_permissions(&key, fs::Permissions::from_mode(0o600))?;
         assert_eq!(read_app_private_key(&key)?, "private key");

@@ -149,7 +149,7 @@ pub fn install(
     }
     if new_app {
         bail!(
-            "--new-app is no longer available from a target repository; radyybot is centrally hosted by {TRUSTED_SOLVER_REPOSITORY}"
+            "--new-app is no longer available from a target repository; RadDuck is centrally hosted by {TRUSTED_SOLVER_REPOSITORY}"
         );
     }
     let reuse_agreement = match existing.as_ref() {
@@ -169,10 +169,10 @@ pub fn install(
             .cloned()
             .ok_or_else(|| anyhow!("existing Rady agreement was missing"))?
     } else {
-        let app = apps::public_app(apps::RADYYBOT_SLUG)?;
+        let app = apps::public_app(apps::RADDUCK_SLUG)?;
         apps::require_app_owner(&app)?;
         apps::require_permissions(&app)?;
-        apps::open_installation(apps::RADYYBOT_SLUG, repo)?;
+        apps::open_installation(apps::RADDUCK_SLUG, repo)?;
         consent::agreement(repo)?
     };
     let files = setup_files(directory, source, required, overwrite, Some(&agreement))?;

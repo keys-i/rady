@@ -3,7 +3,7 @@ set -euo pipefail
 
 : "${GH_TOKEN:?missing App installation token}"
 : "${GITHUB_OUTPUT:?missing GitHub Actions output file}"
-: "${RADY_APP_SLUG:?missing Rady App slug}"
+: "${RADY_APP_SLUG:?missing RadDuck App slug}"
 : "${RADY_OWNER:?missing installation owner}"
 
 maximum_repositories=100

@@ -187,7 +187,7 @@ fn app_api(
     missing: bool,
     jwt: &str,
 ) -> Result<Option<Value>> {
-    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect radyybot"))?;
+    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect RadDuck"))?;
     let payload = payload.map(serde_json::to_string).transpose()?;
     let arguments = app_api_arguments(method, endpoint, payload.as_deref());
     let authorization = app_authorization(jwt);
@@ -277,9 +277,9 @@ fn app_api_response(code: i32, output: &str, missing: bool) -> Result<Option<Str
             (63, _) => format!(
                 "GitHub returned more than {MAX_APP_API_RESPONSE_BYTES} bytes; narrow the request"
             ),
-            (_, 401) => "GitHub didn't accept radyybot's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
-            (_, 403) => "GitHub wouldn't allow this App request (403); check radyybot's permissions and installation".to_owned(),
-            (_, 404) => "GitHub couldn't find this App resource (404); check the radyybot installation".to_owned(),
+            (_, 401) => "GitHub didn't accept RadDuck's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
+            (_, 403) => "GitHub wouldn't allow this App request (403); check RadDuck's permissions and installation".to_owned(),
+            (_, 404) => "GitHub couldn't find this App resource (404); check the RadDuck installation".to_owned(),
             (_, 429) => "GitHub's rate limit is full (429); try again after it resets".to_owned(),
             _ if status != 0 => format!("GitHub rejected the App request (HTTP {status})"),
             _ => format!("Rady couldn't reach GitHub (transport {code})"),
@@ -484,7 +484,7 @@ mod tests {
         let error = app_api_response(22, "hidden\nRADY_HTTP_STATUS:401", false)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("didn't accept radyybot's App credentials"));
+        assert!(error.contains("didn't accept RadDuck's App credentials"));
         assert!(!error.contains("hidden"));
     }
 }
