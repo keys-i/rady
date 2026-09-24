@@ -1,4 +1,4 @@
-# Upgrading to Rady 0.6.6
+# Upgrading to Rady 0.6.7
 
 Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
@@ -8,6 +8,10 @@ target/release/rady --help
 ```
 
 Replace `.venv/bin/rady` with `rady`. `dependasolver` remains a compatibility name for `rady dependasolve`.
+
+## 0.6.7
+
+The hosted GitHub App is now **RadDuck** and responds to `@radduck`. In the central `keys-i/rady` repository, set the Actions variable `RADY_APP_SLUG=radduck`; existing App IDs and credentials remain valid and must not change. Target repositories still store no service credentials.
 
 ## 0.6.6
 
@@ -45,7 +49,7 @@ An operator who needs a continuously running self-hosted deployment can instead 
 
 ```sh
 rady agent serve --app-client-id CLIENT_ID \
-  --app-private-key-file /secure/path/radyybot.pem
+  --app-private-key-file /secure/path/radduck.pem
 ```
 
 Use `--owner OWNER` to narrow the self-hosted service or shard a larger installation set.
@@ -54,7 +58,7 @@ The scheduled Actions workflow remains a fallback and still supplies Dependabot 
 
 ## Central GitHub setup
 
-Rady 0.6.2 adds one guided setup for the public **radyybot** App and central service. The private key, App client ID and slug, and configured model credentials stay in the trusted `keys-i/rady` service, never in a target repository.
+Rady 0.6.2 adds one guided setup for the public **RadDuck** App and central service. The private key, App client ID and slug, and configured model credentials stay in the trusted `keys-i/rady` service, never in a target repository.
 
 Install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then use the guided setup:
 
@@ -72,7 +76,7 @@ Repository administrators install the App and run `rady setup`; they never confi
 
 ## Mentions and providers
 
-Only an `OWNER`, `MEMBER`, or `COLLABORATOR` may use `@radyybot <prompt>`. It returns a concise, evidence-based answer; it cannot modify code, create a PR, or merge work.
+Only an `OWNER`, `MEMBER`, or `COLLABORATOR` may use `@radduck <prompt>`. It returns a concise, evidence-based answer; it cannot modify code, create a PR, or merge work.
 
 GitHub-hosted mentions use compatible centrally configured models and fall back after an unavailable model or quota response. Groq and Cloudflare Workers AI have recurring free allocations under their provider terms; OpenRouter is a low-quota opt-in fallback. Catalog access is not an unlimited or guaranteed free tier, and Rady never rotates keys or accounts to evade quotas or provider terms.
 

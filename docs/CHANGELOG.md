@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.6.7](https://github.com/keys-i/rady/compare/v0.6.6...v0.6.7) (2026-09-25)
+
+### Changes
+
+* rename the hosted GitHub App and mention to RadDuck and `@radduck`
+
 ## [0.6.6](https://github.com/keys-i/rady/compare/v0.6.5...v0.6.6) (2026-09-25)
 
 ### Features
@@ -45,7 +51,7 @@
 ### Features
 
 * add `rady setup` with repository and CI-check discovery
-* centralize radyybot orchestration without target-repository secrets or workflows
+* centralize GitHub App orchestration without target-repository secrets or workflows
 
 ### Security
 
