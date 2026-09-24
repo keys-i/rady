@@ -394,11 +394,11 @@ pub fn error_exit(error: anyhow::Error) -> ExitCode {
         if failure.output == OutputMode::Json {
             eprintln!("{}", json_error_document(failure.kind, &failure.message));
         } else {
-            eprintln!("Rady stopped: {}", failure.message);
+            eprintln!("Rady couldn't finish: {}", failure.message);
         }
         return ExitCode::from(failure.exit_code);
     } else {
-        eprintln!("Rady stopped: {error:#}");
+        eprintln!("Rady couldn't finish: {error:#}");
     }
     ExitCode::FAILURE
 }
@@ -451,23 +451,33 @@ where
 }
 
 fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<()> {
-    let mut ui = Ui::new(theme, output, 4);
+    let mut ui = Ui::new(theme, output, 7);
     ui.title(
         "Rady setup",
-        "One connection. No target-repository secrets.",
+        "Connect this repository without copying secrets into it",
     );
-    ui.stage("Finding repository");
+    ui.stage("Finding the repository");
     let repository = setup::resolve_repository_in(arguments.repo.as_deref(), &arguments.directory)?;
-    ui.stage("Finding CI evidence");
+    ui.stage("Finding a check to run");
     let checks = setup::resolve_checks(&repository, &arguments.checks)?;
-    ui.stage("Preparing radyybot");
-    if !arguments.accept_terms && !setup::has_verified_agreement(&repository, &arguments.directory)?
-    {
-        arguments.accept_terms = accept_terms(output)?;
+    ui.stage("Checking the service agreement");
+    let agreement_exists = setup::has_verified_agreement(&repository, &arguments.directory)?;
+    if arguments.accept_terms || !agreement_exists {
+        ui.finish_progress();
+        arguments.accept_terms =
+            accept_terms(&repository, &checks, theme, output, arguments.accept_terms)?;
     } else {
         arguments.accept_terms = true;
     }
+    ui.stage(if agreement_exists {
+        "Agreement already on file"
+    } else {
+        "Agreement accepted"
+    });
+    ui.stage("Pinning the trusted Rady version");
     let source = SourceRef::resolve(arguments.solver_ref.as_deref())?;
+    ui.stage("Connecting radyybot and saving the setup");
+    ui.finish_progress();
     let preview = setup::run(
         &repository,
         &source,
@@ -479,7 +489,7 @@ fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<(
         true,
         arguments.accept_terms,
     )?;
-    ui.stage("Ready");
+    ui.stage("Ready to review");
     if output == OutputMode::Json {
         println!("{}", json_success_document("setup", &preview)?);
         return Ok(());
@@ -494,24 +504,40 @@ fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<(
         .join("\n");
     print_markdown(
         &format!(
-            "## Repository setup is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials:** `keys-i/rady`\n\nNo secrets were added to this repository. Finish the radyybot installation page if GitHub opened it, then commit the public files below. The central service will pick up mentions and dependency pull requests on its next cycle.\n\n### Files\n\n{files}",
+            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/rady`\n\nNo secrets were added here. If GitHub opened the radyybot installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
             checks.join(", ")
         ),
         theme,
     )
 }
 
-fn accept_terms(output: OutputMode) -> Result<bool> {
-    if output == OutputMode::Json || !io::stdin().is_terminal() || !io::stderr().is_terminal() {
+fn accept_terms(
+    repository: &str,
+    checks: &[String],
+    theme: Theme,
+    output: OutputMode,
+    accepted: bool,
+) -> Result<bool> {
+    if output == OutputMode::Json
+        || !io::stdin().is_terminal()
+        || !io::stdout().is_terminal()
+        || !io::stderr().is_terminal()
+    {
+        if accepted {
+            return Ok(true);
+        }
         bail!(
             "read {} and {}, then rerun with --accept-terms if you agree",
             setup::TERMS_URL,
             setup::PRIVACY_URL
         );
     }
-    eprintln!("Terms: {}", setup::TERMS_URL);
-    eprintln!("Privacy: {}", setup::PRIVACY_URL);
-    eprint!("Do you agree? [y/N] ");
+    print_markdown(&setup_consent_preview(repository, checks), theme)?;
+    if accepted {
+        eprintln!("Accepted with --accept-terms. Continuing with {repository}.\n");
+        return Ok(true);
+    }
+    eprint!("Accept and continue? [y/N] ");
     io::stderr().flush()?;
     let mut answer = String::new();
     io::stdin().read_line(&mut answer)?;
@@ -519,6 +545,15 @@ fn accept_terms(output: OutputMode) -> Result<bool> {
         return Ok(true);
     }
     bail!("setup was not changed; rerun with --accept-terms after you agree")
+}
+
+fn setup_consent_preview(repository: &str, checks: &[String]) -> String {
+    format!(
+        "## Before radyybot connects\n\nFor `{repository}`, Rady will:\n\n- verify your admin access and open the radyybot installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/rady.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/rady`. Rady won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
+        checks.join("`, `"),
+        setup::TERMS_URL,
+        setup::PRIVACY_URL,
+    )
 }
 
 fn requested_output(arguments: &[OsString]) -> OutputMode {
@@ -597,11 +632,12 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
     let mut ui = Ui::new(theme, output, 3);
     ui.title(
         "Rady dependasolve",
-        "Dependency updates, grounded in evidence",
+        "Review dependency updates with the checks you trust",
     );
-    ui.stage("Resolving the trusted solver source");
+    ui.stage("Finding Rady's source");
     let source = SourceRef::resolve(arguments.solver_ref.as_deref())?;
-    ui.stage("Validating repository setup");
+    ui.stage("Checking repository setup");
+    ui.finish_progress();
     let preview = setup::run(
         &arguments.repo,
         &source,
@@ -614,7 +650,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
         arguments.accept_terms,
     )?;
     ui.stage(if arguments.apply {
-        "Repository configured"
+        "Repository ready"
     } else {
         "Preview ready"
     });
@@ -632,7 +668,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
         let markdown = format!(
             "## {}\n\n**Repository:** `{}`\n\n**Source:** `{}`\n\n**CI evidence:** {}\n\n**Branch protection:** unchanged\n\n### Files\n\n{}\n\n{}",
             if arguments.apply {
-                "Setup complete"
+                "Repository is ready"
             } else {
                 "Setup preview"
             },
@@ -641,7 +677,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             arguments.checks.join(", "),
             files,
             if arguments.apply {
-                "Consent is recorded. Central orchestration will verify radyybot access before picking up mentions and pending pull requests."
+                "Your agreement is saved. radyybot will check its access, then handle mentions and pending dependency pull requests."
             } else {
                 "Read `docs/TERMS.md` and `docs/PRIVACY.md`, then run again with `--apply --accept-terms` if you agree."
             }
@@ -653,7 +689,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
 
 fn doctor(arguments: DoctorArgs, theme: Theme, output: OutputMode) -> Result<()> {
     let mut ui = Ui::new(theme, output, 3);
-    ui.title("Rady doctor", "A quick readiness check");
+    ui.title("Rady doctor", "Check what's ready on this machine");
     let mut rows = Vec::new();
     let mut ready = true;
     for name in ["git", "gh"] {
@@ -685,8 +721,8 @@ fn doctor(arguments: DoctorArgs, theme: Theme, output: OutputMode) -> Result<()>
             serde_json::to_string_pretty(&json!({"ready": ready, "requirements": rows}))?
         );
     } else if ready {
-        ui.success("Local coding is ready");
-        ui.note("PR delivery also needs repository push access and fixed acceptance checks");
+        ui.success("This machine is ready for local coding");
+        ui.note("Opening a pull request also needs push access and fixed acceptance checks");
     }
     if ready {
         Ok(())
@@ -996,11 +1032,41 @@ mod tests {
 
     #[test]
     fn setup_requires_explicit_consent_for_json_output() {
-        let error = accept_terms(OutputMode::Json).expect_err("JSON setup cannot prompt");
+        let error = accept_terms(
+            "owner/repo",
+            &["test".to_owned()],
+            Theme::Plain,
+            OutputMode::Json,
+            false,
+        )
+        .expect_err("JSON setup cannot prompt");
         let message = error.to_string();
         assert!(message.contains(setup::TERMS_URL));
         assert!(message.contains(setup::PRIVACY_URL));
         assert!(message.contains("--accept-terms"));
+        assert!(
+            accept_terms(
+                "owner/repo",
+                &["test".to_owned()],
+                Theme::Plain,
+                OutputMode::Json,
+                true,
+            )
+            .unwrap()
+        );
+
+        let preview = setup_consent_preview("owner/repo", &["test".to_owned()]);
+        for expected in [
+            "owner/repo",
+            "`test` as CI evidence",
+            ".github/rady.json",
+            "closed issue",
+            "keys-i/rady",
+            setup::TERMS_URL,
+            setup::PRIVACY_URL,
+        ] {
+            assert!(preview.contains(expected), "{expected}: {preview}");
+        }
     }
 
     #[test]

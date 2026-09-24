@@ -124,8 +124,13 @@ pub(super) fn sweep_with_token(
     if failures.is_empty() {
         return Ok(());
     }
+    let noun = if failures.len() == 1 {
+        "problem"
+    } else {
+        "problems"
+    };
     bail!(
-        "central sweep had {} failure(s): {}",
+        "the mention pass hit {} {noun}: {}",
         failures.len(),
         failures.join("; ")
     )

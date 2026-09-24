@@ -1,8 +1,12 @@
+use std::cell::Cell;
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread;
+use std::time::Duration;
 
 use anyhow::Context;
 use clap::ValueEnum;
@@ -50,15 +54,42 @@ pub struct Ui {
     current: usize,
     total: usize,
     determinate: bool,
+    motion: bool,
+    line_open: Cell<bool>,
+    terminal: Arc<Mutex<()>>,
+    animation: Mutex<Option<TypingAnimation>>,
+    latest_stage: Mutex<Option<StageLine>>,
+}
+
+#[derive(Debug)]
+struct TypingAnimation {
+    stop: mpsc::Sender<()>,
+    worker: thread::JoinHandle<()>,
+}
+
+#[derive(Clone, Debug)]
+struct StageLine {
+    accent: &'static str,
+    current: usize,
+    total: usize,
+    determinate: bool,
+    label: String,
 }
 
 impl Ui {
     #[must_use]
     pub fn new(theme: Theme, mode: OutputMode, total: usize) -> Self {
-        let styled = mode == OutputMode::Human
-            && theme != Theme::Plain
-            && io::stderr().is_terminal()
-            && std::env::var_os("NO_COLOR").is_none();
+        let styled = styled_terminal(
+            mode,
+            theme,
+            io::stderr().is_terminal(),
+            std::env::var_os("NO_COLOR").is_some(),
+        );
+        let motion = terminal_motion(
+            styled,
+            std::env::var_os("RADY_REDUCED_MOTION").is_some(),
+            std::env::var_os("CI").is_some(),
+        );
         Self {
             theme,
             mode,
@@ -66,6 +97,11 @@ impl Ui {
             current: 0,
             total: total.max(1),
             determinate: true,
+            motion,
+            line_open: Cell::new(false),
+            terminal: Arc::new(Mutex::new(())),
+            animation: Mutex::new(None),
+            latest_stage: Mutex::new(None),
         }
     }
 
@@ -80,11 +116,21 @@ impl Ui {
         if self.mode == OutputMode::Json {
             return;
         }
+        self.finish_progress();
+        let title = terminal_text(title);
+        let subtitle = terminal_text(subtitle);
+        let _terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if self.styled {
-            eprintln!("\x1b[1;{}mRADY // DUCK\x1b[0m  {title}", self.accent());
+            eprintln!(
+                "\x1b[1;{}m🦆 RADY\x1b[0m  \x1b[2mduck on watch\x1b[0m  {title}",
+                self.accent()
+            );
             eprintln!("\x1b[2m{subtitle}\x1b[0m\n");
         } else {
-            eprintln!("Rady // Duck\n{title}\n{subtitle}\n");
+            eprintln!("Rady / duck on watch\n{title}\n{subtitle}\n");
         }
     }
 
@@ -97,28 +143,31 @@ impl Ui {
         if self.mode == OutputMode::Json {
             return;
         }
-        if !self.determinate {
-            if self.styled {
-                eprintln!("\x1b[{}m◆\x1b[0m  {label}", self.accent());
-            } else {
-                eprintln!("→ {label}");
+        let label = terminal_text(label);
+        if self.styled {
+            self.stop_animation();
+            let stage = StageLine {
+                accent: self.accent(),
+                current: self.current,
+                total: self.total,
+                determinate: self.determinate,
+                label,
+            };
+            *self
+                .latest_stage
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(stage.clone());
+            let (visible, cursor, newline, animate) = stage_render_state(&stage, self.motion);
+            self.line_open.set(!newline);
+            self.write_stage_line(&stage, visible, animate.then_some(0), cursor, newline);
+            if animate && !self.start_animation(stage.clone()) {
+                self.line_open.set(false);
+                self.write_stage_line(&stage, usize::MAX, None, false, true);
             }
-        } else if self.styled {
-            let width = 24;
-            let filled = width * self.current / self.total;
-            let empty = width - filled;
-            let percent = self.current * 100 / self.total;
-            eprintln!(
-                "\x1b[{}m{}\x1b[2;37m{}\x1b[0m  \x1b[1m{:>3}%\x1b[0m  {}",
-                self.accent(),
-                "━".repeat(filled),
-                "─".repeat(empty),
-                percent,
-                label
-            );
+        } else if !self.determinate {
+            eprintln!("→ {label}");
         } else {
-            let percent = self.current * 100 / self.total;
-            eprintln!("[{percent:>3}%] {label}");
+            eprintln!("[step {}/{}] {label}", self.current, self.total);
         }
     }
 
@@ -138,6 +187,12 @@ impl Ui {
         if self.mode == OutputMode::Json {
             return;
         }
+        self.finish_progress();
+        let message = terminal_text(message);
+        let _terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if self.styled {
             eprintln!("\x1b[{style}m{symbol} {message}\x1b[0m");
         } else {
@@ -158,6 +213,199 @@ impl Ui {
     fn accent(&self) -> &'static str {
         terminal_accent(self.theme)
     }
+
+    pub(crate) fn finish_progress(&self) {
+        self.stop_animation();
+        if self.styled && self.line_open.replace(false) {
+            let stage = self
+                .latest_stage
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            let _terminal = self
+                .terminal
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if let Some(stage) = stage {
+                Self::write_stage_line_locked(
+                    &mut io::stderr().lock(),
+                    &stage,
+                    usize::MAX,
+                    None,
+                    false,
+                    true,
+                );
+            } else {
+                let _ = writeln!(io::stderr().lock());
+            }
+        }
+    }
+
+    fn stop_animation(&self) {
+        let animation = self
+            .animation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take();
+        if let Some(animation) = animation {
+            let _ = animation.stop.send(());
+            let _ = animation.worker.join();
+        }
+    }
+
+    fn start_animation(&self, stage: StageLine) -> bool {
+        let (stop, stopped) = mpsc::channel();
+        let terminal = Arc::clone(&self.terminal);
+        let Ok(worker) = thread::Builder::new()
+            .name("rady-progress".into())
+            .spawn(move || {
+                let length = stage.label.chars().count();
+                for visible in 0..length {
+                    for phase in 1..=3 {
+                        if stopped.recv_timeout(Duration::from_millis(20)).is_ok() {
+                            return;
+                        }
+                        let _terminal = terminal.lock().unwrap_or_else(|error| error.into_inner());
+                        Ui::write_stage_line_locked(
+                            &mut io::stderr().lock(),
+                            &stage,
+                            visible,
+                            Some(phase),
+                            false,
+                            false,
+                        );
+                    }
+                    if stopped.recv_timeout(Duration::from_millis(20)).is_ok() {
+                        return;
+                    }
+                    let _terminal = terminal.lock().unwrap_or_else(|error| error.into_inner());
+                    Ui::write_stage_line_locked(
+                        &mut io::stderr().lock(),
+                        &stage,
+                        visible + 1,
+                        (visible + 1 < length).then_some(0),
+                        visible + 1 < length,
+                        false,
+                    );
+                }
+            })
+        else {
+            return false;
+        };
+        *self
+            .animation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(TypingAnimation { stop, worker });
+        true
+    }
+
+    fn write_stage_line(
+        &self,
+        stage: &StageLine,
+        visible: usize,
+        glitch_phase: Option<usize>,
+        cursor: bool,
+        newline: bool,
+    ) {
+        let _terminal = self
+            .terminal
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        Self::write_stage_line_locked(
+            &mut io::stderr().lock(),
+            stage,
+            visible,
+            glitch_phase,
+            cursor,
+            newline,
+        );
+    }
+
+    fn write_stage_line_locked(
+        output: &mut impl Write,
+        stage: &StageLine,
+        visible: usize,
+        glitch_phase: Option<usize>,
+        cursor: bool,
+        newline: bool,
+    ) {
+        let _ = write!(output, "\r\x1b[2K");
+        if stage.determinate {
+            let width = 24;
+            let filled = width * stage.current / stage.total;
+            let marker = if stage.current == stage.total {
+                "✓"
+            } else {
+                "🦆"
+            };
+            let _ = write!(
+                output,
+                "\x1b[{}m{marker}\x1b[0m  \x1b[2mstep {}/{}\x1b[0m  \x1b[{}m{}\x1b[2m{}\x1b[0m  ",
+                stage.accent,
+                stage.current,
+                stage.total,
+                stage.accent,
+                "━".repeat(filled),
+                "─".repeat(width - filled),
+            );
+        } else {
+            let _ = write!(output, "\x1b[{}m🦆\x1b[0m  ", stage.accent);
+        }
+        let cutoff = scalar_boundary(&stage.label, visible);
+        let _ = write!(output, "{}", &stage.label[..cutoff]);
+        if let Some(phase) = glitch_phase {
+            let _ = write!(output, "\x1b[{}m", stage.accent);
+            for (position, _) in stage.label.char_indices().skip(visible) {
+                let _ = write!(output, "{}", glitch_glyph(position, phase));
+            }
+            let _ = write!(output, "\x1b[0m");
+        }
+        if cursor {
+            let _ = write!(output, "\x1b[5;{}m▒\x1b[0m", stage.accent);
+        }
+        if newline {
+            let _ = writeln!(output);
+        } else {
+            let _ = output.flush();
+        }
+    }
+}
+
+fn scalar_boundary(value: &str, visible: usize) -> usize {
+    value
+        .char_indices()
+        .nth(visible)
+        .map_or(value.len(), |(index, _)| index)
+}
+
+fn styled_terminal(mode: OutputMode, theme: Theme, is_terminal: bool, no_color: bool) -> bool {
+    mode == OutputMode::Human && theme != Theme::Plain && is_terminal && !no_color
+}
+
+fn terminal_motion(styled: bool, reduced_motion: bool, ci: bool) -> bool {
+    styled && !reduced_motion && !ci
+}
+
+fn glitch_glyph(position: usize, phase: usize) -> char {
+    const GLYPHS: &[u8] = b"@#$%&*+=?~";
+    GLYPHS[(position.wrapping_mul(3).wrapping_add(phase)) % GLYPHS.len()] as char
+}
+
+fn stage_render_state(stage: &StageLine, motion: bool) -> (usize, bool, bool, bool) {
+    let complete = stage.determinate && stage.current == stage.total;
+    let animate = motion && !complete && !stage.label.is_empty();
+    (
+        if animate { 0 } else { usize::MAX },
+        false,
+        complete,
+        animate,
+    )
+}
+
+impl Drop for Ui {
+    fn drop(&mut self) {
+        self.finish_progress();
+    }
 }
 
 pub fn print_markdown(markdown: &str, theme: Theme) -> Result<()> {
@@ -167,6 +415,7 @@ pub fn print_markdown(markdown: &str, theme: Theme) -> Result<()> {
     let mut output = io::stdout().lock();
     let accent = terminal_accent(theme);
     for line in markdown.lines() {
+        let line = terminal_text(line);
         if !styled {
             writeln!(output, "{line}")?;
             continue;
@@ -178,7 +427,7 @@ pub fn print_markdown(markdown: &str, theme: Theme) -> Result<()> {
         } else if let Some(heading) = line.strip_prefix("# ") {
             format!("\x1b[1;{accent}m{heading}\x1b[0m")
         } else {
-            terminal_emphasis(line)
+            terminal_emphasis(&line)
         };
         writeln!(output, "{rendered}")?;
     }
@@ -212,24 +461,76 @@ fn terminal_accent(theme: Theme) -> &'static str {
     }
 }
 
-fn terminal_emphasis(line: &str) -> String {
-    let mut result = line.replace("<u>", "\x1b[4m").replace("</u>", "\x1b[24m");
-    result = paired_marker(&result, "**", "\x1b[1m", "\x1b[22m");
-    paired_marker(&result, "*", "\x1b[3m", "\x1b[23m")
+fn terminal_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
-fn paired_marker(value: &str, marker: &str, open: &str, close: &str) -> String {
+fn terminal_emphasis(line: &str) -> String {
+    let mut result = paired_markers(line, "<u>", "</u>", "\x1b[4m", "\x1b[24m");
+    result = paired_markers(&result, "**", "**", "\x1b[1m", "\x1b[22m");
+    paired_single_asterisks(&result)
+}
+
+fn paired_markers(
+    value: &str,
+    start: &str,
+    end: &str,
+    open_style: &str,
+    close_style: &str,
+) -> String {
     let mut result = String::with_capacity(value.len());
     let mut remaining = value;
-    let mut opening = true;
-    while let Some(index) = remaining.find(marker) {
-        result.push_str(&remaining[..index]);
-        result.push_str(if opening { open } else { close });
-        opening = !opening;
-        remaining = &remaining[index + marker.len()..];
+    while let Some(start_index) = remaining.find(start) {
+        result.push_str(&remaining[..start_index]);
+        let content = &remaining[start_index + start.len()..];
+        let Some(end_index) = content.find(end) else {
+            result.push_str(&remaining[start_index..]);
+            return result;
+        };
+        result.push_str(open_style);
+        result.push_str(&content[..end_index]);
+        result.push_str(close_style);
+        remaining = &content[end_index + end.len()..];
     }
     result.push_str(remaining);
     result
+}
+
+fn paired_single_asterisks(value: &str) -> String {
+    let mut result = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(start_index) = single_asterisk(remaining) {
+        result.push_str(&remaining[..start_index]);
+        let content = &remaining[start_index + 1..];
+        let Some(end_index) = single_asterisk(content) else {
+            result.push_str(&remaining[start_index..]);
+            return result;
+        };
+        result.push_str("\x1b[3m");
+        result.push_str(&content[..end_index]);
+        result.push_str("\x1b[23m");
+        remaining = &content[end_index + 1..];
+    }
+    result.push_str(remaining);
+    result
+}
+
+fn single_asterisk(value: &str) -> Option<usize> {
+    value.match_indices('*').find_map(|(index, _)| {
+        let bytes = value.as_bytes();
+        (index.checked_sub(1).and_then(|before| bytes.get(before)) != Some(&b'*')
+            && bytes.get(index + 1) != Some(&b'*'))
+        .then_some(index)
+    })
 }
 
 pub fn write_report(
@@ -249,20 +550,23 @@ pub fn write_report(
         Theme::Dusk => "dusk",
         Theme::Plain => "dawn",
     };
-    let (state_name, state_label, state_attributes) = match state {
+    let (state_name, state_label, state_detail, state_attributes) = match state {
         ReportState::Active => (
             "active",
-            "In progress",
+            "Working",
+            "The evidence will stay here as it arrives",
             r#"role="status" aria-label="Run in progress""#,
         ),
         ReportState::Complete => (
             "complete",
-            "Complete",
+            "Ready to inspect",
+            "Evidence kept with this run",
             r#"role="progressbar" aria-label="Run complete" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100""#,
         ),
         ReportState::Stopped => (
             "stopped",
-            "Stopped",
+            "Stopped safely",
+            "Everything collected so far is still here",
             r#"role="status" aria-label="Run stopped""#,
         ),
     };
@@ -272,6 +576,7 @@ pub fn write_report(
         .replace("{{title}}", &title)
         .replace("{{state}}", state_name)
         .replace("{{state_label}}", state_label)
+        .replace("{{state_detail}}", state_detail)
         .replace("{{state_attributes}}", state_attributes)
         .replace("{{mascot}}", &mascot)
         .replace(
@@ -478,19 +783,20 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     .report { display:grid; grid-template-columns:minmax(14rem,18rem) minmax(0,50rem); align-items:start; justify-content:center; gap:clamp(2rem,5vw,5rem); width:min(100%,76rem); margin:auto; }
     .rail { position:sticky; top:clamp(1rem,4vw,4rem); display:grid; gap:clamp(1.4rem,3vw,2.4rem); }
     .identity { display:grid; gap:.65rem; justify-items:start; }
-    .duck-frame { display:block; width:min(100%,11.5rem); transform-origin:50% 90%; transition:transform .18s var(--ease); }
+    .duck-frame { position:relative; display:block; width:min(100%,13.5rem); transform-origin:50% 90%; transition:transform .18s var(--ease),filter .18s ease; }
+    .duck-frame::after { position:absolute; right:-.2rem; bottom:.45rem; padding:.2rem .38rem; border:1px solid var(--edge); border-radius:999px; background:var(--paper); box-shadow:0 .2rem .5rem var(--shadow); color:var(--accent-strong); content:"ON WATCH"; font:700 .58rem/1 var(--mono); letter-spacing:.08em; }
     .duck { display:block; width:100%; height:auto; filter:drop-shadow(0 .65rem 1rem var(--shadow)); transform-origin:50% 90%; }
     .product,.artifact { display:block; }
     .product { font:750 .82rem/1.2 var(--mono); letter-spacing:.1em; }
     .artifact { color:var(--muted); font: .74rem/1.35 var(--mono); }
     .stage { display:grid; gap:1rem; }
     .rail h1 { max-width:13ch; margin:0; font-size:clamp(2rem,4.4vw,3.7rem); font-variation-settings:"wght" 680,"opsz" 42; line-height:1.03; letter-spacing:-.038em; overflow-wrap:normal; }
-    .progress { position:relative; height:.38rem; overflow:hidden; border:1px solid var(--edge); border-radius:2px; background:repeating-linear-gradient(90deg,var(--accent-wash) 0 .55rem,transparent .55rem .72rem); box-shadow:inset 0 1px 2px var(--shadow); }
-    .progress span { display:block; height:100%; border-radius:1px; background:var(--accent); transform-origin:left; }
-    .progress.active span { width:30%; transform:translateX(-110%); will-change:transform; }
+    .progress { position:relative; height:.44rem; overflow:hidden; border:1px solid var(--edge); border-radius:999px; background:repeating-linear-gradient(90deg,var(--accent-wash) 0 .55rem,transparent .55rem .72rem); box-shadow:inset 0 1px 2px var(--shadow); }
+    .progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--accent-strong),var(--accent)); transform-origin:left; }
+    .progress.active span { width:34%; }
     .progress.complete span { width:100%; }
     .progress.stopped span { width:100%; background:var(--warning); }
-    .status-label { display:flex; justify-content:space-between; gap:.8rem; color:var(--muted); font: .74rem/1.4 var(--mono); text-transform:uppercase; }
+    .status-label { display:flex; justify-content:space-between; gap:.8rem; color:var(--muted); font: .74rem/1.4 var(--mono); }
     .status-label strong { color:var(--ink); font-weight:700; }
     fieldset { display:grid; gap:.2rem; margin:0; padding:1rem 0 0; border:0; border-top:1px solid var(--edge); }
     legend { margin-bottom:.45rem; padding:0; color:var(--muted); font:700 .7rem/1.3 var(--mono); letter-spacing:.08em; text-transform:uppercase; }
@@ -498,6 +804,7 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     .theme-choice:hover { background:color-mix(in srgb,var(--accent-wash) 55%,transparent); color:var(--ink); }
     .theme-choice input { width:1rem; height:1rem; margin:0; accent-color:var(--accent); }
     .theme-choice input:checked + span { color:var(--ink); font-weight:700; text-decoration:underline; text-decoration-color:var(--accent); text-decoration-thickness:2px; text-underline-offset:.22em; }
+    .theme-choice:has(input:checked) { border-color:color-mix(in srgb,var(--accent) 30%,transparent); background:color-mix(in srgb,var(--accent-wash) 45%,transparent); }
     .theme-choice:has(input:focus-visible) { outline:3px solid color-mix(in srgb,var(--accent) 50%,transparent); outline-offset:2px; }
     article { position:relative; min-width:0; padding:clamp(1.5rem,5vw,4.5rem); border:1px solid var(--edge); border-radius:var(--sheet-radius); background:var(--paper); box-shadow:inset .25rem 0 0 color-mix(in srgb,var(--accent) 42%,transparent),0 1.4rem 4rem var(--shadow); overflow-wrap:anywhere; }
     article::before { position:absolute; top:-1px; right:clamp(1.2rem,4vw,3rem); width:clamp(3rem,9vw,6rem); height:3px; background:var(--accent); content:""; }
@@ -531,13 +838,14 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     math { font-size:1.05em; }
     math[display="block"] { max-width:100%; overflow:auto; margin:2rem 0; color:var(--ink); }
     .footnote-definition { color:var(--muted); font-size:.88rem; }
-    @media (prefers-reduced-motion:no-preference) { .progress.active span { animation:tide 1.8s steps(6,end) infinite; } .duck-frame { animation:duck-arrive .42s var(--ease) backwards; } .duck { animation:duck-idle 7s var(--ease) 1.2s infinite; } .duck-frame:hover { transform:translateY(-3px) rotate(1deg) scale(1.015); } .duck-frame:hover .duck { animation-play-state:paused; } .theme-choice:active,a:active { transform:translateY(1px); } }
-    @keyframes tide { 0% { transform:translateX(-110%); } 55%,100% { transform:translateX(350%); } }
+    @media (prefers-reduced-motion:no-preference) { .progress.active span { animation:progress-arrive .28s var(--ease) both; transform-origin:left; } .duck-frame { animation:duck-arrive .42s var(--ease) backwards; } .duck { animation:duck-idle 7s var(--ease) 1.2s infinite; } .duck-frame:hover { filter:brightness(1.03); transform:translateY(-3px) rotate(1deg) scale(1.015); } .duck-frame:hover .duck { animation-play-state:paused; } .theme-choice:has(input:checked) { animation:theme-settle .2s var(--ease); } .theme-choice:active,a:active { transform:translateY(1px); } }
+    @keyframes progress-arrive { from { transform:scaleX(0); } to { transform:scaleX(1); } }
     @keyframes duck-arrive { from { opacity:0; transform:translateY(.45rem) rotate(-1deg) scale(.98); } }
     @keyframes duck-idle { 0%,84%,100% { transform:translateY(0) rotate(0); } 88% { transform:translateY(-2px) rotate(-.7deg); } 92% { transform:translateY(-1px) rotate(.7deg); } }
+    @keyframes theme-settle { from { transform:translateX(-.18rem); } }
     @media (max-width:780px) { body { padding:1rem; } .report { grid-template-columns:1fr; gap:1.5rem; } .rail { position:static; grid-template-columns:1fr; gap:1.2rem; } .rail h1 { max-width:18ch; font-size:clamp(2rem,11vw,3.5rem); } fieldset { grid-template-columns:repeat(2,minmax(0,1fr)); } legend { grid-column:1/-1; } article { padding:clamp(1.25rem,6vw,2rem); border-radius:var(--sheet-radius); } }
     @media (max-width:420px) { fieldset { grid-template-columns:1fr; } }
-    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; } .progress.active span { width:55%; transform:none; } }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:.01ms!important; animation-iteration-count:1!important; transition-duration:.01ms!important; } .progress.active span { transform:none; } }
     @media (prefers-reduced-transparency:reduce) { body { background:var(--canvas); } }
     @media (forced-colors:active) { .duck-frame,.progress,article,pre,code { forced-color-adjust:auto; } .progress span { background:Highlight; } }
     @media print { body { padding:0; background:white; } .report { display:block; width:auto; } .rail { position:static; margin-bottom:2rem; } fieldset { display:none; } article { padding:0; border:0; box-shadow:none; } .progress.active { display:none; } }
@@ -548,12 +856,12 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
     <header class="rail">
       <div class="identity">
         <span class="duck-frame"><img class="duck" src="{{mascot}}" width="512" height="512" alt="Rady duck"></span>
-        <span><span class="product">Rady</span><span class="artifact">Duck / evidence report</span></span>
+        <span><span class="product">Rady</span><span class="artifact">Duck on watch · evidence report</span></span>
       </div>
       <div class="stage">
         <h1>{{title}}</h1>
         <div class="progress {{state}}" {{state_attributes}}><span></span></div>
-        <div class="status-label"><strong>{{state_label}}</strong><span>Evidence retained</span></div>
+        <div class="status-label"><strong>{{state_label}}</strong><span>{{state_detail}}</span></div>
       </div>
       <fieldset>
         <legend>Reading theme</legend>
@@ -626,11 +934,118 @@ mod tests {
         assert!(value.contains("\x1b[1m"));
         assert!(value.contains("\x1b[3m"));
         assert!(value.contains("\x1b[4m"));
+        for unclosed in ["**bold", "*italic", "<u>line"] {
+            assert_eq!(terminal_emphasis(unclosed), unclosed);
+        }
+        let clean = terminal_text("safe\x1b]8;;https://bad.example\x07text\u{009b}31m");
+        assert!(!clean.chars().any(char::is_control));
+        assert!(!clean.contains('\x1b'));
         let mut ui = Ui::indeterminate(Theme::Plain, OutputMode::Json);
         for _ in 0..5 {
             ui.stage("bounded work");
         }
         assert_eq!(ui.current, 5);
+    }
+
+    #[test]
+    fn typing_boundaries_keep_unicode_scalars_intact() {
+        let label = "duck 🦆 ready";
+        for (visible, expected) in [(0, ""), (1, "d"), (6, "duck 🦆"), (99, label)] {
+            assert_eq!(&label[..scalar_boundary(label, visible)], expected);
+        }
+    }
+
+    #[test]
+    fn decoding_phases_replace_every_unsettled_position() {
+        let stage = StageLine {
+            accent: "36",
+            current: 2,
+            total: 7,
+            determinate: true,
+            label: "duck".into(),
+        };
+        let mut previous = None;
+        for (phase, expected) in [(0, "%+~"), (1, "&=@"), (2, "*?#")] {
+            assert!(expected.chars().all(|glyph| glyph.is_ascii_graphic()));
+            let mut output = Vec::new();
+            Ui::write_stage_line_locked(&mut output, &stage, 1, Some(phase), false, false);
+            let output = String::from_utf8(output).unwrap();
+            assert!(output.contains(&format!("d\x1b[36m{expected}\x1b[0m")));
+            assert!(!output.contains("uck"));
+            assert_ne!(previous, Some(expected));
+            previous = Some(expected);
+        }
+    }
+
+    #[test]
+    fn progress_worker_joins_and_noninteractive_modes_stay_instant() {
+        for (mode, theme, terminal, no_color, expected) in [
+            (OutputMode::Human, Theme::Dusk, true, false, true),
+            (OutputMode::Json, Theme::Dusk, true, false, false),
+            (OutputMode::Human, Theme::Plain, true, false, false),
+            (OutputMode::Human, Theme::Dusk, false, false, false),
+            (OutputMode::Human, Theme::Dusk, true, true, false),
+        ] {
+            assert_eq!(styled_terminal(mode, theme, terminal, no_color), expected);
+        }
+        for (styled, reduced_motion, ci, expected) in [
+            (true, false, false, true),
+            (true, true, false, false),
+            (true, false, true, false),
+            (false, false, false, false),
+        ] {
+            assert_eq!(terminal_motion(styled, reduced_motion, ci), expected);
+        }
+
+        let ui = Ui::new(Theme::Plain, OutputMode::Human, 2);
+        let (stop, stopped) = mpsc::channel();
+        let joined = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_joined = Arc::clone(&joined);
+        let worker = thread::spawn(move || {
+            let _ = stopped.recv();
+            worker_joined.store(true, Ordering::Release);
+        });
+        *ui.animation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(TypingAnimation { stop, worker });
+        assert!(
+            ui.animation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_some()
+        );
+        ui.finish_progress();
+        assert!(joined.load(Ordering::Acquire));
+        assert!(
+            ui.animation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn final_progress_stages_are_immediate_and_closed() {
+        let stage = StageLine {
+            accent: "36",
+            current: 7,
+            total: 7,
+            determinate: true,
+            label: "Ready to review".into(),
+        };
+        assert_eq!(
+            stage_render_state(&stage, true),
+            (usize::MAX, false, true, false)
+        );
+        let active = StageLine {
+            current: 3,
+            ..stage
+        };
+        assert_eq!(stage_render_state(&active, true), (0, false, false, true));
+        assert_eq!(
+            stage_render_state(&active, false),
+            (usize::MAX, false, false, false)
+        );
     }
 
     #[test]
@@ -719,10 +1134,10 @@ mod tests {
             Theme::Dusk,
             Theme::Plain,
         ] {
-            for state in [
-                ReportState::Active,
-                ReportState::Complete,
-                ReportState::Stopped,
+            for (state, state_label) in [
+                (ReportState::Active, "Working"),
+                (ReportState::Complete, "Ready to inspect"),
+                (ReportState::Stopped, "Stopped safely"),
             ] {
                 let path = directory.path().join(format!("{theme:?}-{state:?}.html"));
                 write_report(
@@ -741,8 +1156,11 @@ mod tests {
                 assert!(report.contains("<math"), "{theme:?}");
                 assert!(report.contains("class=\"duck\""), "{theme:?}");
                 assert!(report.contains("alt=\"Rady duck\""), "{theme:?}");
+                assert!(report.contains("Duck on watch"), "{theme:?}");
+                assert!(report.contains(state_label), "{theme:?} {state:?}");
                 assert!(report.contains("data:image/png;base64,"), "{theme:?}");
                 assert!(report.contains("@keyframes duck-idle"), "{theme:?}");
+                assert!(report.contains("@keyframes theme-settle"), "{theme:?}");
                 assert!(!report.contains("possum"), "{theme:?}");
                 assert!(!report.contains("<script"), "{theme:?}");
                 assert_eq!(

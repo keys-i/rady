@@ -111,7 +111,7 @@ This is one guided setup, not a secret-distribution exercise.
 rady setup
 ```
 
-For automation or a non-interactive shell, use `rady setup --repo keys-i/REPO --check test --accept-terms`. Setup writes the small, public `.github/rady.json` consent configuration and adds Dependabot configuration only when missing. Review and commit those changes. It also creates a closed, admin-authored consent receipt; the central service rechecks that receipt and the signer’s current admin access before doing any work.
+At a terminal, setup previews the access, files, CI evidence and data handling before asking you to continue. For automation, use `rady setup --repo keys-i/REPO --check test --accept-terms`. Setup writes a small, non-secret `.github/rady.json`, adds Dependabot configuration only when missing, and creates a closed consent receipt. Review and commit the generated files. The central service rechecks the receipt and the signer’s admin access before doing any work.
 
 Replace `keys-i/REPO` with the target repository. That is all a repository administrator configures. The App and model credentials live only in the trusted `keys-i/rady` service. Rady currently polls, so a mention or update is picked up on the next service cycle; real-time responses would require a verified webhook deployment.
 

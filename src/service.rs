@@ -76,22 +76,25 @@ pub(crate) fn serve(arguments: ServeArgs) -> Result<()> {
         let cycle = service_cycle(&arguments, &mut tokens, &mut mention_cursors);
         if let Ok(reviewed) = &cycle {
             consecutive_failures = 0;
-            eprintln!(
-                "Rady service cycle complete · {} new pull request review(s)",
-                reviewed
-            );
-        } else {
+            if *reviewed == 0 {
+                eprintln!("No pull requests needed a review this pass");
+            } else {
+                let noun = if *reviewed == 1 {
+                    "pull request"
+                } else {
+                    "pull requests"
+                };
+                eprintln!("Reviewed {reviewed} {noun} this pass");
+            }
+        } else if !arguments.once {
             consecutive_failures = consecutive_failures.saturating_add(1);
-            eprintln!(
-                "Rady service cycle needs attention: {}",
-                cycle.as_ref().unwrap_err()
-            );
+            eprintln!("This pass couldn't finish: {}", cycle.as_ref().unwrap_err());
         }
         if arguments.once {
             return cycle.map(|_| ());
         }
         if consecutive_failures >= 3 {
-            bail!("persistent service stopped after three failed cycles");
+            bail!("service stopped after three failed passes");
         }
         thread::sleep(Duration::from_secs(arguments.interval));
     }
@@ -112,8 +115,13 @@ fn service_cycle(
     if failures.is_empty() {
         Ok(reviewed)
     } else {
+        let noun = if failures.len() == 1 {
+            "problem"
+        } else {
+            "problems"
+        };
         bail!(
-            "service cycle had {} installation failure(s): {}",
+            "this pass hit {} installation {noun}: {}",
             failures.len(),
             failures.join("; ")
         )
