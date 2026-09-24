@@ -96,6 +96,10 @@ pub(crate) struct CodeArgs {
     #[arg(long = "mcp", action = clap::ArgAction::Append)]
     mcp_servers: Vec<String>,
 
+    /// Use the configured `browser` MCP server for an explicit preview task
+    #[arg(long)]
+    browser: bool,
+
     /// Keep remote delivery as one final commit instead of task checkpoints
     #[arg(long)]
     ghost: bool,
@@ -103,6 +107,7 @@ pub(crate) struct CodeArgs {
 
 pub(crate) fn run(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Result<()> {
     let request = quality::load_request(arguments.task.as_deref(), arguments.spec.as_deref())?;
+    let mcp_servers = selected_mcp_servers(arguments.mcp_servers, arguments.browser);
     let conversational = arguments.spec.is_none()
         && !arguments.pr
         && arguments.repo.is_none()
@@ -110,7 +115,7 @@ pub(crate) fn run(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Resu
         && arguments.expected_start.is_none()
         && arguments.checks.is_empty()
         && arguments.benchmarks.is_empty()
-        && arguments.mcp_servers.is_empty()
+        && mcp_servers.is_empty()
         && !arguments.ghost
         && request.plan.is_none()
         && request.checks.is_empty()
@@ -168,7 +173,7 @@ pub(crate) fn run(arguments: CodeArgs, theme: Theme, output: OutputMode) -> Resu
         seed_patch: None,
         resumed_from: None,
         expected_start: arguments.expected_start,
-        mcp_servers: arguments.mcp_servers,
+        mcp_servers,
         ghost: arguments.ghost,
         theme,
         output,
@@ -245,6 +250,14 @@ fn deduplicate(values: impl IntoIterator<Item = String>) -> Vec<String> {
         .collect()
 }
 
+fn selected_mcp_servers(mcp_servers: Vec<String>, browser: bool) -> Vec<String> {
+    deduplicate(
+        mcp_servers
+            .into_iter()
+            .chain(browser.then(|| "browser".to_owned())),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use clap::{Args, Command, FromArgMatches};
@@ -275,6 +288,38 @@ mod tests {
         assert_eq!(
             arguments.expected_start.as_deref(),
             Some(expected_start.as_str())
+        );
+    }
+
+    #[test]
+    fn browser_flag_selects_the_configured_server_once() {
+        let command = CodeArgs::augment_args(Command::new("code"));
+        let matches = command
+            .try_get_matches_from([
+                "code",
+                "inspect the preview",
+                "--browser",
+                "--mcp",
+                "browser",
+            ])
+            .expect("browser flag must parse");
+        let arguments = CodeArgs::from_arg_matches(&matches).expect("arguments must decode");
+        assert!(arguments.browser);
+        assert_eq!(
+            selected_mcp_servers(arguments.mcp_servers, arguments.browser),
+            ["browser"]
+        );
+    }
+
+    #[test]
+    fn browser_is_never_selected_implicitly() {
+        assert_eq!(
+            selected_mcp_servers(vec!["docs".to_owned()], false),
+            ["docs"]
+        );
+        assert_eq!(
+            selected_mcp_servers(Vec::new(), false),
+            Vec::<String>::new()
         );
     }
 

@@ -13,6 +13,22 @@ const MAX_TOTAL_BYTES: usize = 256 * 1024;
 const MAX_SKILLS: usize = 16;
 const MAX_MCP_SERVERS: usize = 8;
 const MAX_MCP_ARGS: usize = 32;
+const BROWSER_COMMAND: &str = "playwright-mcp";
+const BROWSER_ARGS: &[&str] = &[
+    "--headless",
+    "--isolated",
+    "--sandbox",
+    "--no-webmcp",
+    "--block-service-workers",
+    "--timeout-action",
+    "5000",
+    "--timeout-navigation",
+    "15000",
+    "--idle-timeout",
+    "30000",
+    "--output-max-size",
+    "10485760",
+];
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct McpConfiguration {
@@ -27,6 +43,11 @@ struct McpServer {
 }
 
 impl McpConfiguration {
+    #[must_use]
+    pub fn contains(&self, name: &str) -> bool {
+        self.servers.iter().any(|server| server.name == name)
+    }
+
     #[must_use]
     pub fn claude_json(&self) -> String {
         let servers: Map<String, Value> = self
@@ -205,6 +226,21 @@ fn select_mcp(
 
 fn validate_servers(servers: &BTreeMap<String, McpServerFile>) -> Result<()> {
     for (name, server) in servers {
+        if name == "browser" {
+            if server.command != BROWSER_COMMAND {
+                bail!("reserved MCP server \"browser\" must use command \"{BROWSER_COMMAND}\"");
+            }
+            if server
+                .args
+                .iter()
+                .map(String::as_str)
+                .ne(BROWSER_ARGS.iter().copied())
+            {
+                bail!(
+                    "reserved MCP server \"browser\" must use the fixed sandboxed Playwright arguments"
+                );
+            }
+        }
         if !valid_name(name)
             || !valid_command(&server.command)
             || server.args.len() > MAX_MCP_ARGS
@@ -319,9 +355,10 @@ fn render_guidance(sections: &[(String, String)]) -> String {
 mod tests {
     use std::fs;
 
+    use serde_json::json;
     use tempfile::tempdir;
 
-    use super::RepositoryContext;
+    use super::{BROWSER_ARGS, RepositoryContext};
 
     #[test]
     fn loads_bounded_guidance_and_explicit_mcp() {
@@ -359,6 +396,8 @@ mod tests {
             r#"mcp_servers={docs={command="npx",args=["-y", "docs-mcp"]}}"#
         );
         assert_eq!(mcp.claude_allowed_tools(), "mcp__docs");
+        assert!(mcp.contains("docs"));
+        assert!(!mcp.contains("browser"));
         assert!(RepositoryContext::load(tempdir().unwrap().path(), &[]).is_ok());
     }
 
@@ -389,6 +428,49 @@ mod tests {
                 RepositoryContext::load(root.path(), &selected).is_err(),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn reserves_browser_for_the_sandboxed_playwright_command() {
+        let valid_args = BROWSER_ARGS
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect::<Vec<_>>();
+        for (name, command, args, valid) in [
+            ("valid", "playwright-mcp", valid_args.clone(), true),
+            ("command", "sh", valid_args.clone(), false),
+            (
+                "missing",
+                "playwright-mcp",
+                valid_args[..12].to_vec(),
+                false,
+            ),
+            (
+                "extra",
+                "playwright-mcp",
+                [valid_args.clone(), vec!["--unsafe".to_owned()]].concat(),
+                false,
+            ),
+        ] {
+            let root = tempdir().unwrap();
+            fs::create_dir(root.path().join(".rady")).unwrap();
+            fs::write(
+                root.path().join(".rady/context.json"),
+                json!({"schema": 1, "mcp_servers": {"browser": {"command": command, "args": args}}}).to_string(),
+            )
+            .unwrap();
+            let result = RepositoryContext::load(root.path(), &[]);
+            assert_eq!(result.is_ok(), valid, "{name}");
+            if !valid {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("reserved MCP server \"browser\""),
+                    "{name}"
+                );
+            }
         }
     }
 }

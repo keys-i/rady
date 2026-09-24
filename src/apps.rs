@@ -461,18 +461,37 @@ fn open_browser(url: &str) {
     };
     for (program, arguments) in candidates {
         if let Some(binary) = crate::agent::which(program) {
-            let _ = std::process::Command::new(binary)
-                .args(*arguments)
-                .arg(url)
-                .spawn();
+            let _ = browser_command(binary, arguments, url).spawn();
             return;
         }
     }
 }
 
+fn browser_command(
+    binary: impl AsRef<std::ffi::OsStr>,
+    arguments: &[&str],
+    url: &str,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(binary);
+    command
+        .env_clear()
+        .envs(crate::agent::safe_environment())
+        .args(arguments)
+        .arg(url);
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn browser_command_rebuilds_a_safe_environment() {
+        let command = browser_command("open", &[], "https://example.test");
+        let environment = command.get_envs().collect::<BTreeMap<_, _>>();
+        assert!(environment.contains_key(std::ffi::OsStr::new("PATH")));
+        assert!(!environment.contains_key(std::ffi::OsStr::new("RADY_APP_PRIVATE_KEY")));
+    }
 
     #[test]
     fn registration_routes_serve_fragmented_page_and_duck() -> Result<()> {

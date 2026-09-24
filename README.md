@@ -60,14 +60,36 @@ Skills and MCP are configured explicitly in `.rady/context.json`. Merely opening
   "schema": 1,
   "skills": [".rady/skills/rust.md"],
   "mcp_servers": {
-    "docs": { "command": "docs-mcp", "args": [] }
+    "docs": { "command": "docs-mcp", "args": [] },
+    "browser": {
+      "command": "playwright-mcp",
+      "args": [
+        "--headless", "--isolated", "--sandbox", "--no-webmcp",
+        "--block-service-workers", "--timeout-action", "5000",
+        "--timeout-navigation", "15000", "--idle-timeout", "30000",
+        "--output-max-size", "10485760"
+      ]
+    }
   }
 }
 ```
 
 Select a server only for a write run with `rady code "..." --mcp docs`. Rady passes no model, GitHub, or App keys to it.
 
-Rady resolves obvious intent without a model, sends only ambiguous decisions to the fastest available classifier, and adds an independent evidence brief before deep hosted answers. Known Gemini, Cerebras, and xAI models are tried first; their bounded catalogues are discovered only when a fallback is needed.
+For a local frontend preview, install a reviewed, version-pinned Microsoft Playwright MCP release so `playwright-mcp` is on `PATH`, add the exact `browser` entry above, then run `rady code "Check the preview at http://127.0.0.1:3000" --browser`. Rady rejects a different command or argument set, never downloads it, and starts it only when you explicitly select it with `--browser` or `--mcp browser`. Use an explicit local or user-supplied preview URL; do not log in, use production credentials, or mutate production. The browser MCP remains privileged local code, not a security boundary. `rady agent ask` and the GitHub service never receive it.
+
+Rady resolves obvious intent without a model, sends only ambiguous decisions through the fast model path, and adds an independent evidence brief before deep hosted answers. Gemini, Cerebras, xAI, Groq, Cloudflare Workers AI, and OpenRouter are tried only when centrally configured; supported catalogues are discovered, cached, bounded, and combined with known-safe fallbacks.
+
+For a self-hosted [Laya](https://laya.convaiinnovations.com/) classifier, install `laya[serve]`, then start it on loopback with authentication:
+
+```sh
+export LAYA_HOST=127.0.0.1
+export LAYA_API_KEY='choose-a-local-secret'
+export LAYA_PRELOAD=1
+laya-serve
+```
+
+Set `RADY_LAYA_ENABLED=true` and `RADY_LAYA_API_KEY` to that same secret. Rady uses only `http://127.0.0.1:8000/v1/systemone` to select intent and a model tier; it never asks Laya to draft an answer. Deterministic rules and the hosted classifier remain fallbacks. Laya is intentionally absent from the GitHub-hosted service because hosted runners cannot reach your local server.
 
 The central `keys-i/rady` orchestration workflow is the normal service host. It discovers installed radyybot Apps, mints short-lived installation tokens, and polls consented repositories every five minutes. No workflow or secret is installed in a target repository.
 
@@ -127,7 +149,7 @@ Replace `keys-i/REPO` with the target repository. That is all a repository admin
 
 Owners, members, and collaborators can use mentions on issues and pull requests. Replies are read-only, concise, and specific to the available evidence; a bare `@radyybot` shows usage. They cannot edit code or publish a change.
 
-GitHub-hosted replies select compatible Gemini and Cerebras models exposed to the configured accounts, then use fallbacks. The catalogs describe accessible models, not a promise of a free tier or unlimited quota; Rady does not evade provider limits. Private repository evidence is sent only to providers explicitly opted in by the central operator.
+GitHub-hosted replies select compatible centrally configured providers, then use bounded fallbacks. Groq and Cloudflare Workers AI offer recurring free allocations subject to their terms; OpenRouter is a low-quota opt-in fallback. No provider has an unlimited tier, and Rady never rotates keys or accounts to evade quotas. Private repository evidence is sent only to providers explicitly opted in by the central operator.
 
 ## Safety
 
