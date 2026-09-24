@@ -107,6 +107,13 @@ pub(super) fn sweep_with_token(
                 arguments.harness,
                 private,
             ) {
+                if crate::mentions::is_hosted_unavailable(&error) {
+                    eprintln!(
+                        "{name}: model providers are cooling down; Rady will retry these mentions next pass"
+                    );
+                    repo_failed = true;
+                    break;
+                }
                 record_sweep_failure(&mut failures, name, &error);
                 repo_failed = true;
             }

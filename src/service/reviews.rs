@@ -127,6 +127,12 @@ pub(super) fn service_reviews(
                 Duration::ZERO,
             ) {
                 Ok(outcome) => reviewed += usize::from(outcome.published),
+                Err(error) if crate::mentions::is_hosted_unavailable(&error) => {
+                    eprintln!(
+                        "{name}: model providers are cooling down; Rady will retry pull requests next pass"
+                    );
+                    continue 'repositories;
+                }
                 Err(error) => record_sweep_failure(&mut failures, name, &error),
             }
         }

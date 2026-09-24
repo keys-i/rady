@@ -120,24 +120,30 @@ pub fn review_pr(
             published: false,
         });
     }
-    for previous in own.into_iter().filter(|item| item["state"] == "APPROVED") {
-        github.api(
-            &format!("pulls/{number}/reviews/{}/dismissals", previous["id"]),
-            Some(&json!({"message": "Rechecking the current diff and CI results"})),
-            "PUT",
-        )?;
-    }
-    let result = model_review(&context, model, harness, repository_private)?;
-    let (current, _) = resolve(github, number)?;
-    if current["head"]["sha"] != context["head"] || current["base"]["sha"] != context["base"] {
-        bail!("the PR changed during review; rerun on the new commit");
-    }
-    if json!(checks(github, head)?) != context["checks"] {
-        bail!("CI changed during review; rerun to assess the latest results");
-    }
-    protection = github.api_optional(&endpoint, None, "GET")?;
-    let (event, blockers) = decision(&result, &context, required, protection.as_ref())?;
-    let body = render(&result, &context, event, &blockers, &marker);
+    let replacement = (|| -> Result<_> {
+        let result = model_review(&context, model, harness, repository_private)?;
+        let (current, _) = resolve(github, number)?;
+        if current["head"]["sha"] != context["head"] || current["base"]["sha"] != context["base"] {
+            bail!("the PR changed during review; rerun on the new commit");
+        }
+        if json!(checks(github, head)?) != context["checks"] {
+            bail!("CI changed during review; rerun to assess the latest results");
+        }
+        protection = github.api_optional(&endpoint, None, "GET")?;
+        let (event, blockers) = decision(&result, &context, required, protection.as_ref())?;
+        let body = render(&result, &context, event, &blockers, &marker);
+        Ok((event, body))
+    })();
+    let (event, body) = dismiss_before_publish(replacement, || {
+        for previous in own.into_iter().filter(|item| item["state"] == "APPROVED") {
+            github.api(
+                &format!("pulls/{number}/reviews/{}/dismissals", previous["id"]),
+                Some(&json!({"message": "Rechecking the current diff and CI results"})),
+                "PUT",
+            )?;
+        }
+        Ok(())
+    })?;
     github.api(
         &format!("pulls/{number}/reviews"),
         Some(&json!({"commit_id": head, "event": event, "body": body})),
@@ -156,6 +162,15 @@ pub fn review_pr(
             && presentation::auto_merge_ready(protection.as_ref()),
         published: true,
     })
+}
+
+fn dismiss_before_publish<T>(
+    replacement: Result<T>,
+    dismiss: impl FnOnce() -> Result<()>,
+) -> Result<T> {
+    let replacement = replacement?;
+    dismiss()?;
+    Ok(replacement)
 }
 
 fn text<'a>(value: &'a Value, path: &[&str]) -> Result<&'a str> {
@@ -190,10 +205,25 @@ fn hex(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::percent_encode;
+    use anyhow::anyhow;
+
+    use super::{dismiss_before_publish, percent_encode};
 
     #[test]
     fn percent_encoding_is_path_safe() {
         assert_eq!(percent_encode("feature/a b"), "feature%2Fa%20b");
+    }
+
+    #[test]
+    fn failed_review_never_dismisses_an_existing_approval() {
+        let mut dismissed = false;
+        let outcome =
+            dismiss_before_publish::<()>(Err(anyhow!("hosted models unavailable")), || {
+                dismissed = true;
+                Ok(())
+            });
+
+        assert!(outcome.is_err());
+        assert!(!dismissed);
     }
 }
