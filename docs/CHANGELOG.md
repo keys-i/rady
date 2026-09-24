@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/keys-i/rady/compare/v0.5.8...v0.6.0) (2026-09-24)
+
+### Features
+
+* add `rady agent ask`, follow-ups, and the persistent service command
+* add bounded project guidance, explicit skills, selected local MCP servers, and conversation memory
+* add intent routing, evidence briefs, progressive checkpoints, and `--ghost`
+
+### Security
+
+* expand credential scrubbing for native harnesses and MCP processes
+
 ## [0.5.8](https://github.com/keys-i/rady/compare/v0.5.7...v0.5.8) (2026-09-22)
 
 
