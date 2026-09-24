@@ -186,10 +186,9 @@ pub fn deliver(mut config: Config) -> Result<Value> {
         output: config.output,
     };
     run.persist()?;
-    run.ui
-        .title("Rady", "A checked path from request to change");
+    run.ui.title("Rady", "Turn a request into a checked change");
     run.ui.note(&format!(
-        "Run {} · cancel with `rady cancel {}`",
+        "Run {}. Stop it with `rady cancel {}`",
         run.stored.id(),
         run.stored.id()
     ));
@@ -217,19 +216,19 @@ pub fn deliver(mut config: Config) -> Result<Value> {
             run.state["error"] = json!(format!("{error:#}"));
             let cancel_file = run.scratch.join("cancelled");
             let stage = if run.stored.is_cancelled()? {
-                "Stopped, workspace retained"
+                "Stopped — workspace kept"
             } else {
                 match retain_patch(&mut run, &workspace, Some(&cancel_file)) {
-                    Ok(()) => "Stopped, work retained",
+                    Ok(()) => "Stopped — work kept",
                     Err(retention_error) => {
                         run.state["retention_error"] = json!(retention_error.to_string());
-                        "Stopped, workspace retained"
+                        "Stopped — workspace kept"
                     }
                 }
             };
             run.stage(stage)?;
             Err(anyhow!(
-                "{error:#}\nWorkspace and gate evidence: {}",
+                "{error:#}\nWork and check details: {}",
                 run.scratch.display()
             ))
         }
@@ -252,7 +251,7 @@ fn run_delivery(
         network_auth,
     } = repository;
     let cancel_file = run.scratch.join("cancelled");
-    run.stage("Preparing an isolated workspace")?;
+    run.stage("Setting up a clean workspace")?;
     if config.repo.is_some() && config.expected_start.is_none() {
         git_network(
             directory,
@@ -290,7 +289,7 @@ fn run_delivery(
         bail!("the source revision changed; start a fresh run on the new revision");
     }
     run.state["start"] = json!(start);
-    run.stage("Workspace isolated")?;
+    run.stage("Clean workspace ready")?;
     let original = snapshot(
         workspace,
         &changed_files(workspace, &start, Some(&cancel_file))?,
@@ -304,13 +303,13 @@ fn run_delivery(
 
     let plan = if let Some(plan) = &config.plan {
         run.stage(if config.resumed_from.is_some() {
-            "Using retained acceptance criteria"
+            "Using saved acceptance criteria"
         } else {
-            "Using supplied acceptance criteria"
+            "Using your acceptance criteria"
         })?;
         plan.clone()
     } else {
-        run.stage("Shaping acceptance criteria")?;
+        run.stage("Defining what success looks like")?;
         quality::plan(
             &config.task,
             workspace,
@@ -713,7 +712,7 @@ fn run_delivery(
             );
             continue;
         }
-        run.stage("Reviewing the checked evidence")?;
+        run.stage("Reviewing the result")?;
         let evidence = json!({
             "checks": check_results,
             "acceptance_before": baseline_acceptance,
@@ -769,11 +768,11 @@ fn run_delivery(
     )?;
     run.state["gates"]["unchanged_after_validation"] = json!("pass");
     if config.repo.is_none() {
-        run.stage("Checked change ready")?;
-        run.ui.success("The checked workspace is ready");
+        run.stage("Checked change ready to apply")?;
+        run.ui.success("Your checked change is ready");
         return Ok(());
     }
-    run.stage("Publishing the checked change")?;
+    run.stage("Opening the pull request")?;
     if git(
         directory,
         &["remote", "get-url", "origin"],
@@ -812,15 +811,7 @@ fn run_delivery(
         &config.acceptance_checks,
         Some(&cancel_file),
     )?;
-    let title = config
-        .task
-        .lines()
-        .next()
-        .unwrap_or("Implement the requested specification")
-        .trim_start_matches(['#', ' '])
-        .chars()
-        .take(72)
-        .collect::<String>();
+    let title = pull_request_title(&config.task);
     run.ensure_active()?;
     if let Some(expected_start) = config.expected_start.as_deref() {
         let base = base.ok_or_else(|| anyhow!("a pinned publication requires a base branch"))?;
@@ -862,6 +853,7 @@ fn run_delivery(
     {
         bail!("workspace changed during commit; publishing is blocked");
     }
+    let body = pull_request_body(config, &plan, &report, &verified, &after)?;
     let repo = config.repo.as_deref().unwrap_or_default();
     run.ensure_active()?;
     run.state["publication"] = json!({
@@ -882,7 +874,6 @@ fn run_delivery(
     )?;
     run.state["publication"]["status"] = json!("branch pushed");
     run.persist()?;
-    let body = pull_request_body(config, &plan, &report, &verified, &after);
     run.ensure_active()?;
     run.state["publication"]["status"] = json!("pull request requested");
     run.persist()?;
@@ -1157,53 +1148,173 @@ fn run_worker(
     )
 }
 
+const MAX_PULL_REQUEST_FIELD_BYTES: usize = 32_000;
+const MAX_PULL_REQUEST_BODY_BYTES: usize = 60_000;
+
 fn pull_request_body(
     config: &Config,
     plan: &Plan,
     report: &ReviewReport,
     verified: &[Value],
     benchmarks: &[Measurement],
-) -> String {
-    let mut body = format!("{}\n\n{}\n\nValidation:\n", config.task, report.summary);
+) -> Result<String> {
+    let mut body = String::from("## Requested change\n\n");
+    push_pr_text(&mut body, "task", &config.task)?;
+    body.push_str("\n\n## Review summary\n\n");
+    push_pr_text(&mut body, "review summary", &report.summary)?;
+    body.push_str("\n\n## Validation\n");
     for check in &config.checks {
-        body.push_str(&format!("- Passed: `{check}`\n"));
+        body.push_str("- Passed: ");
+        push_pr_text(&mut body, "check", check)?;
+        body.push('\n');
     }
-    body.push_str("\nReview gates:\n");
+    body.push_str("\n## Review gates\n");
     for (name, gate) in &report.gates {
-        body.push_str(&format!(
-            "- {name}: {:?} - {}\n",
-            gate.status, gate.evidence
-        ));
+        body.push_str("- ");
+        push_pr_text(&mut body, "gate name", name)?;
+        body.push_str(&format!(": {:?} — ", gate.status));
+        push_pr_text(&mut body, "gate evidence", &gate.evidence)?;
+        body.push('\n');
     }
-    body.push_str("\nAcceptance evidence:\n");
+    body.push_str("\n## Acceptance evidence\n");
     for item in &report.acceptance {
-        body.push_str(&format!(
-            "- {}: {:?} - {}\n",
-            plan.acceptance[item.criterion], item.status, item.evidence
-        ));
+        let criterion = plan
+            .acceptance
+            .get(item.criterion)
+            .ok_or_else(|| anyhow!("review cited an unknown acceptance criterion"))?;
+        body.push_str("- ");
+        push_pr_text(&mut body, "acceptance criterion", criterion)?;
+        body.push_str(&format!(": {:?} — ", item.status));
+        push_pr_text(&mut body, "acceptance evidence", &item.evidence)?;
+        body.push('\n');
     }
-    body.push_str("\nFixed acceptance checks:\n");
+    body.push_str("\n## Fixed acceptance checks\n");
     for item in verified {
         body.push_str(&format!(
-            "- Criterion {}: `{}` - {}\n",
+            "- Criterion {}: ",
             item["criterion"].as_u64().unwrap_or(0) + 1,
-            item["command"].as_str().unwrap_or_default(),
-            item["status"].as_str().unwrap_or("unknown")
         ));
+        push_pr_text(
+            &mut body,
+            "acceptance command",
+            item["command"].as_str().unwrap_or_default(),
+        )?;
+        body.push_str(" — ");
+        push_pr_text(
+            &mut body,
+            "acceptance status",
+            item["status"].as_str().unwrap_or("unknown"),
+        )?;
+        body.push('\n');
     }
-    body.push_str(&format!(
-        "\nBenchmark: {}\n",
-        if benchmarks.is_empty() {
-            "Not run; no benchmark supplied".to_owned()
-        } else {
-            serde_json::to_string(benchmarks).unwrap_or_else(|_| "Unavailable".to_owned())
-        }
-    ));
-    body.push_str("\nLimitations:\n");
+    body.push_str("\n## Benchmark\n\n");
+    let benchmark = if benchmarks.is_empty() {
+        "Not run; no benchmark supplied".to_owned()
+    } else {
+        serde_json::to_string(benchmarks).unwrap_or_else(|_| "Unavailable".to_owned())
+    };
+    push_pr_text(&mut body, "benchmark", &benchmark)?;
+    body.push_str("\n\n## Limitations\n");
     for limitation in report.limitations.iter().chain(&plan.limitations) {
-        body.push_str(&format!("- {limitation}\n"));
+        body.push_str("- ");
+        push_pr_text(&mut body, "limitation", limitation)?;
+        body.push('\n');
     }
-    body
+    if body.len() > MAX_PULL_REQUEST_BODY_BYTES {
+        bail!(
+            "pull request body is too large after safely rendering evidence; reduce the task or evidence"
+        );
+    }
+    Ok(body)
+}
+
+fn push_pr_text(body: &mut String, field: &str, value: &str) -> Result<()> {
+    let rendered = markdown_text(value);
+    if rendered.len() > MAX_PULL_REQUEST_FIELD_BYTES {
+        bail!("{field} is too large to publish safely in a pull request");
+    }
+    body.push_str(&rendered);
+    Ok(())
+}
+
+pub(super) fn markdown_text(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len().min(MAX_PULL_REQUEST_FIELD_BYTES + 1));
+    for character in value.chars() {
+        if escaped.len() > MAX_PULL_REQUEST_FIELD_BYTES {
+            break;
+        }
+        if unsafe_text_control(character) {
+            escaped.push(' ');
+        } else if character == '@' {
+            escaped.push_str("@\u{200b}");
+        } else if character == '&' {
+            escaped.push_str("&amp;");
+        } else {
+            if matches!(
+                character,
+                '\\' | '`'
+                    | '*'
+                    | '_'
+                    | '{'
+                    | '}'
+                    | '['
+                    | ']'
+                    | '('
+                    | ')'
+                    | '<'
+                    | '>'
+                    | '#'
+                    | '!'
+                    | '|'
+                    | '~'
+                    | '^'
+                    | '$'
+                    | '+'
+                    | '-'
+                    | '.'
+            ) {
+                escaped.push('\\');
+            }
+            escaped.push(character);
+        }
+    }
+    escaped
+}
+
+fn github_plain_text(value: &str) -> String {
+    let mut safe = String::with_capacity(value.len());
+    for character in value.chars() {
+        if unsafe_text_control(character) {
+            safe.push(' ');
+        } else if character == '@' {
+            safe.push_str("@\u{200b}");
+        } else if character == '&' {
+            safe.push_str("and");
+        } else {
+            safe.push(character);
+        }
+    }
+    safe
+}
+
+fn pull_request_title(task: &str) -> String {
+    task.lines()
+        .map(|line| github_plain_text(line.trim_start_matches(['#', ' '])))
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take(72).collect())
+        .unwrap_or_else(|| "Implement the requested specification".to_owned())
+}
+
+fn unsafe_text_control(character: char) -> bool {
+    character.is_control()
+        || matches!(
+            character,
+            '\u{061c}'
+                | '\u{200b}'..='\u{200f}'
+                | '\u{202a}'..='\u{202e}'
+                | '\u{2060}'..='\u{206f}'
+                | '\u{feff}'
+        )
 }
 
 fn repository_from_remote(remote: &str) -> Option<String> {
@@ -1307,6 +1418,124 @@ mod tests {
         assert_eq!(commands[0], ["cargo", "test", "--", "two words"]);
         assert_eq!(tail("hello", 3), "llo");
         assert_eq!(tail("🦔rust", 4), "rust");
+        Ok(())
+    }
+
+    #[test]
+    fn pull_request_body_keeps_hostile_evidence_inert_and_bounded() -> Result<()> {
+        let hostile = "@team &#64;team &commat;team <!-- nope -->\u{1b}[31m\u{202e} # heading [link](https://example.test)";
+        let config = Config {
+            task: hostile.to_owned(),
+            directory: PathBuf::from("."),
+            repo: Some("owner/repo".to_owned()),
+            checks: vec![hostile.to_owned()],
+            harness: Harness::Command,
+            agents: 1,
+            model: None,
+            model_choices: Vec::new(),
+            review_model: None,
+            plan: None,
+            acceptance_checks: Vec::new(),
+            max_tokens: None,
+            orchestrator_model: None,
+            orchestrator_harness: None,
+            base: None,
+            attempts: 1,
+            timeout: Duration::from_secs(1),
+            benchmarks: Vec::new(),
+            benchmark_runs: 3,
+            benchmark_warmups: 0,
+            benchmark_metric: None,
+            max_benchmark_noise: 1.0,
+            max_regression: 1.0,
+            max_files: 1,
+            max_lines: 1,
+            theme: Theme::Plain,
+            output: OutputMode::Human,
+            seed_patch: None,
+            resumed_from: None,
+            expected_start: None,
+            mcp_servers: Vec::new(),
+            ghost: false,
+        };
+        let plan = Plan {
+            acceptance: vec![hostile.to_owned()],
+            scope: vec!["src".to_owned()],
+            limitations: vec![hostile.to_owned()],
+            performance_required: false,
+            model_index: None,
+            tasks: Vec::new(),
+        };
+        let mut gates = BTreeMap::new();
+        gates.insert(
+            hostile.to_owned(),
+            quality::Gate {
+                status: quality::GateStatus::Pass,
+                evidence: hostile.to_owned(),
+            },
+        );
+        let report = ReviewReport {
+            summary: hostile.to_owned(),
+            gates,
+            blockers: Vec::new(),
+            limitations: vec![hostile.to_owned()],
+            acceptance: vec![quality::AcceptanceResult {
+                criterion: 0,
+                status: quality::GateStatus::Pass,
+                evidence: hostile.to_owned(),
+                checks: Vec::new(),
+            }],
+        };
+        let body = pull_request_body(&config, &plan, &report, &[], &[])?;
+        assert!(body.contains("## Requested change"));
+        assert!(body.contains("@\u{200b}team"));
+        assert!(body.contains(r"&amp;\#64;team"));
+        assert!(body.contains("&amp;commat;team"));
+        assert!(body.contains(r"\<\!\-\- nope \-\-\>"));
+        assert!(body.contains(r"\# heading \[link\]\(https://example\.test\)"));
+        assert!(!body.contains('\u{1b}'));
+        assert!(!body.contains('\u{202e}'));
+        let title = github_plain_text(hostile);
+        assert!(title.contains("@\u{200b}team"));
+        assert!(!title.contains('\u{1b}'));
+        assert!(!title.contains('\u{202e}'));
+        assert_eq!(
+            pull_request_title("\n\u{202e}\n# Ship the fix"),
+            "Ship the fix"
+        );
+        assert_eq!(
+            pull_request_title("#  \n\u{202e}"),
+            "Implement the requested specification"
+        );
+
+        let oversized_field = Config {
+            task: "x".repeat(MAX_PULL_REQUEST_FIELD_BYTES + 1),
+            ..config
+        };
+        assert!(
+            pull_request_body(&oversized_field, &plan, &report, &[], &[])
+                .unwrap_err()
+                .to_string()
+                .contains("task is too large")
+        );
+
+        let oversized_body = Config {
+            task: "x".repeat(30_000),
+            ..oversized_field
+        };
+        let oversized_report = ReviewReport {
+            summary: "y".repeat(30_000),
+            gates: BTreeMap::new(),
+            blockers: Vec::new(),
+            limitations: Vec::new(),
+            acceptance: Vec::new(),
+        };
+        assert!(
+            pull_request_body(&oversized_body, &plan, &oversized_report, &[], &[])
+                .unwrap_err()
+                .to_string()
+                .contains("body is too large")
+        );
         Ok(())
     }
 }

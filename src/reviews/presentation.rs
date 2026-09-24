@@ -84,11 +84,6 @@ pub fn render(
     blockers: &[String],
     marker: &str,
 ) -> String {
-    let name = if context["dependency"].as_bool() == Some(true) {
-        "Dependasolver"
-    } else {
-        "Rady"
-    };
     let ready = event == "APPROVE";
     let head = context["head"].as_str().unwrap_or_default();
     let checks = context["checks"]
@@ -102,8 +97,12 @@ pub fn render(
     let mut lines = vec![
         marker.to_owned(),
         format!(
-            "### {name} — {}",
-            if ready { "Ready to merge" } else { "Hold" }
+            "### {}",
+            if ready {
+                "Ready to merge"
+            } else {
+                "Needs attention"
+            }
         ),
         String::new(),
         format!(
@@ -114,13 +113,16 @@ pub fn render(
         String::new(),
     ];
     if ready {
-        lines.push("The supplied diff and required check evidence are approved. GitHub remains the source of truth for mergeability.".to_owned());
+        lines.push(
+            "Everything Rady could verify is clear; GitHub still decides whether this branch can merge."
+                .to_owned(),
+        );
     } else {
-        lines.push("This review is not approving the PR yet.".to_owned());
+        lines.push("This isn’t ready to merge yet.".to_owned());
     }
     lines.extend([String::new(), "What changed".to_owned()]);
     if files.is_empty() {
-        lines.push("- No changed-file evidence was supplied".to_owned());
+        lines.push("- No changed-file details were supplied".to_owned());
     } else {
         lines.extend(files.iter().take(12).map(|file| {
             format!(
@@ -136,7 +138,7 @@ pub fn render(
     }
     lines.extend([String::new(), "Checks".to_owned()]);
     if checks.is_empty() {
-        lines.push("- No GitHub check evidence was supplied".to_owned());
+        lines.push("- No GitHub check results were supplied".to_owned());
     } else {
         lines.extend(checks.iter().take(20).map(|item| {
             format!(
@@ -154,7 +156,7 @@ pub fn render(
     }
     lines.extend([
         String::new(),
-        "Next action".to_owned(),
+        "What to do next".to_owned(),
         next_action(event, blockers).to_owned(),
         String::new(),
         markdown_text(&review.summary),
@@ -172,7 +174,7 @@ pub fn render(
         lines.extend([
             String::new(),
             format!(
-                "Compatibility - {}",
+                "Compatibility: {}",
                 context["score"]
                     .as_f64()
                     .map_or_else(|| "unavailable".to_owned(), |score| format!("{score}%"))
@@ -201,10 +203,9 @@ pub fn render(
     }
     lines.extend([
         String::new(),
-        format!("Review - {:?} risk", review.risk),
+        format!("Risk: {:?}", review.risk),
         String::new(),
-        "Reviewed the supplied diff and GitHub check results; this reviewer ran no tests."
-            .to_owned(),
+        "I reviewed the supplied diff and GitHub check results; I didn’t run tests.".to_owned(),
     ]);
     let body = lines[1..]
         .join("\n")
@@ -268,9 +269,9 @@ fn repair_handoff(
             .cloned(),
     );
     lines.extend([
-        "Resolve the blockers below. If a change is required, create a maintainer replacement PR; do not push to the Dependabot branch.".to_owned(),
+        "Fix the blockers below. If code needs to change, open a maintainer replacement PR instead of pushing to the Dependabot branch.".to_owned(),
         String::new(),
-        "Repair brief".to_owned(),
+        "For the follow-up PR".to_owned(),
         format!("- Source: {}", markdown_text(&source)),
         format!("- Reviewed head: {}", markdown_text(head)),
         format!("- Review risk: {:?}", review.risk),
@@ -354,7 +355,11 @@ fn markdown_text(value: &str) -> String {
         ) {
             escaped.push('\\');
         }
-        escaped.push(character);
+        if character == '&' {
+            escaped.push_str("&amp;");
+        } else {
+            escaped.push(character);
+        }
     }
     escaped
 }
@@ -411,8 +416,7 @@ mod tests {
     #[test]
     fn rendering_neutralises_mentions_and_hidden_markers() {
         let review = ModelReview {
-            summary: "Reviewed. @person <!-- marker [click](https://example.test)\n# fake"
-                .to_owned(),
+            summary: "Reviewed. @person &#64;team &commat;team <!-- marker [click](https://example.test)\n# fake".to_owned(),
             risk: Risk::Low,
             observations: vec![],
             blockers: vec![],
@@ -426,6 +430,10 @@ mod tests {
             "<!-- safe -->",
         );
         assert!(body.contains("@\u{200b}person"));
+        assert!(body.contains("&amp;\\#64;team"));
+        assert!(body.contains("&amp;commat;team"));
+        assert!(!body.contains(" &#64;team"));
+        assert!(!body.contains(" &commat;team"));
         assert!(!body["<!-- safe -->".len()..].contains("<!--"));
         assert!(body.contains(r"\[click\]"));
         assert!(!body.contains("\n# fake"));
@@ -445,19 +453,19 @@ mod tests {
             (
                 "APPROVE",
                 vec![],
-                "### Rady — Ready to merge",
+                "### Ready to merge",
                 "use GitHub's Merge control when it is enabled",
             ),
             (
                 "COMMENT",
                 vec!["`test` is still running (pending)".to_owned()],
-                "### Rady — Hold",
+                "### Needs attention",
                 "Wait for the named checks to finish",
             ),
             (
                 "COMMENT",
                 vec!["`test` needs attention (failure)".to_owned()],
-                "### Rady — Hold",
+                "### Needs attention",
                 "Resolve the blockers below",
             ),
         ] {
@@ -471,7 +479,7 @@ mod tests {
                 "Checks",
                 "[test](<https://github.com/owner/repo/actions/runs/1>) — success",
                 "unsafe — failure",
-                "Next action",
+                "What to do next",
                 action,
             ] {
                 assert!(body.contains(expected), "missing {expected} in {body}");
@@ -511,7 +519,7 @@ mod tests {
                 assert!(body.is_empty());
             } else {
                 for expected in [
-                    "If a change is required, create a maintainer replacement PR; do not push to the Dependabot branch.",
+                    "If code needs to change, open a maintainer replacement PR instead of pushing to the Dependabot branch.",
                     r"- Source: \#42 https://github.com/owner/repo/pull/42",
                     "- Reviewed head: aaaa",
                     "- Compatibility: 96%",

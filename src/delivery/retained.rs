@@ -14,9 +14,9 @@ use crate::ui::{
 };
 use serde_json::Value;
 
-use super::Config;
 use super::evidence::{Fingerprint, changed_files, evidence, hash_file, snapshot};
 use super::git::git;
+use super::{Config, markdown_text};
 
 pub(super) fn retain_candidate(
     run: &mut Run,
@@ -190,13 +190,14 @@ impl Run {
     }
 
     pub(super) fn finish(&self) -> Result<()> {
+        self.ui.finish_progress();
         if self.output == OutputMode::Json {
             println!("{}", json_success_document("code", &self.state)?);
         } else {
             let markdown = report_markdown(&self.state, false);
             print_markdown(&markdown, self.theme)?;
             self.ui.note(&format!(
-                "Run {} · Evidence: {}",
+                "Saved run {}. Full details: {}",
                 self.stored.id(),
                 self.scratch.join("run.html").display()
             ));
@@ -239,9 +240,9 @@ pub fn list_runs(theme: Theme, output: OutputMode) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&json!({"runs": runs}))?);
         return Ok(());
     }
-    let mut markdown = String::from("## Retained runs\n\n");
+    let mut markdown = String::from("## Saved runs\n\n");
     if runs.is_empty() {
-        markdown.push_str("No retained runs yet.\n");
+        markdown.push_str("No saved runs yet.\n");
     }
     for run in &runs {
         let pending = cancellation_pending(run);
@@ -254,7 +255,7 @@ pub fn list_runs(theme: Theme, output: OutputMode) -> Result<()> {
                 markdown_text(run["status"].as_str().unwrap_or("unknown"))
             },
             if pending {
-                "Cancellation requested — stopping at the current safe boundary".to_owned()
+                "Stopping after the current safe step".to_owned()
             } else {
                 markdown_text(
                     run["stage"]
@@ -301,7 +302,7 @@ pub fn cancel_run(id: &str, theme: Theme, output: OutputMode) -> Result<()> {
     } else {
         print_markdown(
             &format!(
-                "## Cancellation requested\n\nRun `{}` will stop at the active boundary.\n",
+                "## Stop requested\n\nRun `{}` will stop after the current safe step.\n",
                 markdown_text(id)
             ),
             theme,
@@ -515,7 +516,7 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
     }
     if cancellation_pending(state) {
         text.push_str(
-            "## Cancellation requested\n\nStopping at the current safe boundary; retained evidence remains available.\n\n",
+            "## Stop requested\n\nRady will stop after the current safe step. Saved details remain available.\n\n",
         );
     }
     if let Some(task) = state["task"].as_str() {
@@ -553,7 +554,7 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
             .as_array()
             .filter(|runs| !runs.is_empty())
         {
-            text.push_str("## Agent work\n\n");
+            text.push_str("## Work done\n\n");
             for run in runs {
                 text.push_str(&format!(
                     "- **{}:** {}\n",
@@ -578,7 +579,7 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
             .or_else(|| state["acceptance_before"].as_array())
             .filter(|acceptance| !acceptance.is_empty());
         if let Some(acceptance) = acceptance {
-            text.push_str("## Fixed acceptance evidence\n\n");
+            text.push_str("## Acceptance evidence\n\n");
             for item in acceptance {
                 text.push_str(&format!(
                     "- **{}:** criterion {} · {}\n",
@@ -641,7 +642,7 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
         }
         if let Some(publication) = state["publication"].as_object() {
             text.push_str(&format!(
-                "\n> Publication status is **{}** for `{}` on branch `{}`. Inspect the remote branch before retrying.\n",
+                "\n> Publishing status: **{}** for `{}` on branch `{}`. Check the remote branch before trying again.\n",
                 markdown_text(
                     publication
                         .get("status")
@@ -662,10 +663,7 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
                 )
             ));
             if let Some(url) = publication.get("url").and_then(Value::as_str) {
-                text.push_str(&format!(
-                    "\n> Confirmed pull request: `{}`\n",
-                    markdown_text(url)
-                ));
+                text.push_str(&format!("\n> Pull request: `{}`\n", markdown_text(url)));
             }
         }
         if let Some(retention_error) = state["retention_error"].as_str() {
@@ -676,39 +674,6 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
         }
     }
     text
-}
-
-fn markdown_text(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for character in value.chars() {
-        if matches!(
-            character,
-            '\\' | '`'
-                | '*'
-                | '_'
-                | '{'
-                | '}'
-                | '['
-                | ']'
-                | '('
-                | ')'
-                | '<'
-                | '>'
-                | '#'
-                | '!'
-                | '|'
-                | '~'
-                | '^'
-                | '$'
-                | '+'
-                | '-'
-                | '.'
-        ) {
-            escaped.push('\\');
-        }
-        escaped.push(character);
-    }
-    escaped
 }
 
 #[cfg(test)]
@@ -734,7 +699,7 @@ mod tests {
         ] {
             assert!(report.contains(escaped));
         }
-        assert!(report.contains("Publication status"));
+        assert!(report.contains("Publishing status"));
         assert!(report.contains("recovery patch could not be retained"));
         assert!(report.contains("## Diff"));
         assert!(!report_markdown(&state, false).contains("## Diff"));

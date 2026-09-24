@@ -1,4 +1,6 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::collections::BTreeMap;
+use std::path::Path;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, anyhow, bail};
 use base64::Engine as _;
@@ -8,7 +10,13 @@ use ring::signature::{RSA_PKCS1_SHA256, RsaKeyPair};
 use serde_json::Value;
 
 use crate::Result;
-use crate::github::{api_authenticated, validate_repository};
+use crate::agent;
+use crate::github::validate_repository;
+
+const APP_API_BASE: &str = "https://api.github.com/";
+const APP_API_TIMEOUT: Duration = Duration::from_secs(30);
+const HTTP_STATUS_MARKER: &str = "\nRADY_HTTP_STATUS:";
+const MAX_APP_API_RESPONSE_BYTES: usize = 1_000_000;
 
 pub(crate) fn mint_installation_tokens(
     private_key_pem: &str,
@@ -25,7 +33,7 @@ pub(crate) fn mint_installation_tokens(
         .map(|installation| {
             let jwt = current_app_jwt(&key, issuer)?;
             let endpoint = format!("app/installations/{installation}/access_tokens");
-            let response = api_authenticated(&endpoint, Some(&request), "POST", false, &jwt)?
+            let response = app_api(&endpoint, Some(&request), "POST", false, &jwt)?
                 .ok_or_else(|| anyhow!("GitHub returned no installation token"))?;
             installation_token(&response)
         })
@@ -145,7 +153,7 @@ fn app_installation_ids(key: &RsaKeyPair, issuer: &str, owner: Option<&str>) -> 
             format!("orgs/{owner}/installation"),
         ] {
             let jwt = current_app_jwt(key, issuer)?;
-            if let Some(response) = api_authenticated(&endpoint, None, "GET", true, &jwt)? {
+            if let Some(response) = app_api(&endpoint, None, "GET", true, &jwt)? {
                 return installation_id(&response).map(|id| vec![id]);
             }
         }
@@ -154,7 +162,7 @@ fn app_installation_ids(key: &RsaKeyPair, issuer: &str, owner: Option<&str>) -> 
     let mut ids = Vec::new();
     for page in 1..=3 {
         let jwt = current_app_jwt(key, issuer)?;
-        let response = api_authenticated(
+        let response = app_api(
             &format!("app/installations?per_page=100&page={page}"),
             None,
             "GET",
@@ -170,6 +178,118 @@ fn app_installation_ids(key: &RsaKeyPair, issuer: &str, owner: Option<&str>) -> 
         }
     }
     bail!("GitHub App has too many installations; shard the service with --owner")
+}
+
+fn app_api(
+    endpoint: &str,
+    payload: Option<&Value>,
+    method: &str,
+    missing: bool,
+    jwt: &str,
+) -> Result<Option<Value>> {
+    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect radyybot"))?;
+    let payload = payload.map(serde_json::to_string).transpose()?;
+    let arguments = app_api_arguments(method, endpoint, payload.as_deref());
+    let authorization = app_authorization(jwt);
+    let output = agent::execute(
+        curl.as_os_str(),
+        &arguments,
+        Path::new("."),
+        authorization.as_bytes(),
+        APP_API_TIMEOUT + Duration::from_secs(5),
+        &BTreeMap::new(),
+        false,
+        None,
+    )?;
+    let response = app_api_response(output.code, &output.stdout, missing).with_context(|| {
+        format!(
+            "GitHub API {method} {}",
+            super::safe_endpoint_label(endpoint)
+        )
+    })?;
+    response
+        .map(|body| serde_json::from_str(&body).context("GitHub returned invalid JSON"))
+        .transpose()
+}
+
+fn app_api_arguments(method: &str, endpoint: &str, payload: Option<&str>) -> Vec<String> {
+    let mut arguments = vec![
+        "--disable".to_owned(),
+        "--silent".to_owned(),
+        "--show-error".to_owned(),
+        "--fail-with-body".to_owned(),
+        "--proto".to_owned(),
+        "=https".to_owned(),
+        "--tlsv1.2".to_owned(),
+        "--no-location".to_owned(),
+        "--request".to_owned(),
+        method.to_owned(),
+        "--header".to_owned(),
+        "@-".to_owned(),
+        "--header".to_owned(),
+        "Accept: application/vnd.github+json".to_owned(),
+        "--header".to_owned(),
+        "X-GitHub-Api-Version: 2022-11-28".to_owned(),
+        "--header".to_owned(),
+        "User-Agent: Rady".to_owned(),
+    ];
+    if let Some(payload) = payload {
+        arguments.extend([
+            "--header".to_owned(),
+            "Content-Type: application/json".to_owned(),
+            "--data-raw".to_owned(),
+            payload.to_owned(),
+        ]);
+    }
+    arguments.extend([
+        "--connect-timeout".to_owned(),
+        "5".to_owned(),
+        "--max-time".to_owned(),
+        APP_API_TIMEOUT.as_secs().to_string(),
+        "--max-filesize".to_owned(),
+        MAX_APP_API_RESPONSE_BYTES.to_string(),
+        "--write-out".to_owned(),
+        format!("{HTTP_STATUS_MARKER}%{{http_code}}"),
+        format!("{APP_API_BASE}{endpoint}"),
+    ]);
+    arguments
+}
+
+fn app_authorization(jwt: &str) -> String {
+    format!("Authorization: Bearer {jwt}\n")
+}
+
+fn app_api_response(code: i32, output: &str, missing: bool) -> Result<Option<String>> {
+    let (body, status) = output
+        .rsplit_once(HTTP_STATUS_MARKER)
+        .ok_or_else(|| anyhow!("GitHub returned no HTTP status"))?;
+    let status = status
+        .parse::<u16>()
+        .map_err(|_| anyhow!("GitHub returned an invalid HTTP status"))?;
+    if missing && status == 404 {
+        return Ok(None);
+    }
+    if code != 0 || !(200..300).contains(&status) {
+        let message = match (code, status) {
+            (6, _) => "Rady couldn't resolve api.github.com".to_owned(),
+            (7, _) => "Rady couldn't connect to GitHub".to_owned(),
+            (28, _) => "GitHub took too long to respond".to_owned(),
+            (63, _) => format!(
+                "GitHub returned more than {MAX_APP_API_RESPONSE_BYTES} bytes; narrow the request"
+            ),
+            (_, 401) => "GitHub didn't accept radyybot's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
+            (_, 403) => "GitHub wouldn't allow this App request (403); check radyybot's permissions and installation".to_owned(),
+            (_, 404) => "GitHub couldn't find this App resource (404); check the radyybot installation".to_owned(),
+            (_, 429) => "GitHub's rate limit is full (429); try again after it resets".to_owned(),
+            _ if status != 0 => format!("GitHub rejected the App request (HTTP {status})"),
+            _ => format!("Rady couldn't reach GitHub (transport {code})"),
+        };
+        bail!(message);
+    }
+    if body.len() > MAX_APP_API_RESPONSE_BYTES {
+        bail!("GitHub returned too much data; narrow the request");
+    }
+    Ok((!body.trim().is_empty()).then(|| body.to_owned()))
 }
 
 fn append_installation_page(ids: &mut Vec<u64>, response: &Value) -> Result<bool> {
@@ -325,5 +445,46 @@ mod tests {
         );
         assert!(append_installation_page(&mut Vec::new(), &oversized).is_err());
         Ok(())
+    }
+
+    #[test]
+    fn app_transport_uses_bearer_without_exposing_the_jwt() {
+        let jwt = "header.payload.signature";
+        assert_eq!(
+            app_authorization(jwt),
+            "Authorization: Bearer header.payload.signature\n"
+        );
+        for (method, payload, sends_body) in [
+            ("GET", None, false),
+            ("POST", Some(r#"{"permissions":{"contents":"read"}}"#), true),
+        ] {
+            let arguments = app_api_arguments(method, "app/installations", payload);
+            assert!(
+                arguments.windows(2).any(|pair| pair == ["--header", "@-"]),
+                "{arguments:?}"
+            );
+            assert!(!arguments.iter().any(|argument| argument.contains(jwt)));
+            assert_eq!(
+                arguments.iter().any(|argument| argument == "--data-raw"),
+                sends_body
+            );
+        }
+
+        for (code, response, missing, expected) in [
+            (0, "[]\nRADY_HTTP_STATUS:200", false, Some("[]")),
+            (22, "hidden\nRADY_HTTP_STATUS:404", true, None),
+        ] {
+            assert_eq!(
+                app_api_response(code, response, missing)
+                    .unwrap()
+                    .as_deref(),
+                expected
+            );
+        }
+        let error = app_api_response(22, "hidden\nRADY_HTTP_STATUS:401", false)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("didn't accept radyybot's App credentials"));
+        assert!(!error.contains("hidden"));
     }
 }

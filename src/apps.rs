@@ -51,7 +51,7 @@ impl Identity {
 pub fn permissions() -> Value {
     json!({
         "administration": "read",
-        "contents": "write",
+        "contents": "read",
         "checks": "read",
         "issues": "write",
         "statuses": "read",
@@ -129,7 +129,7 @@ pub fn require_permissions(app: &Value) -> Result<()> {
         });
     if !valid {
         bail!(
-            "the App needs Administration, Checks and Commit statuses read, plus Contents, Issues and Pull requests write"
+            "the App needs Administration, Checks, Contents and Commit statuses read, plus Issues and Pull requests write"
         );
     }
     Ok(())
@@ -192,7 +192,7 @@ pub fn register_app(repo: &str, identity: Identity) -> Result<Value> {
     let form = setup_page(
         "Connect your repository",
         &format!(
-            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong> to review dependency pull requests from their diff and CI evidence, enable protected auto-merge when safe, and respond when a trusted collaborator writes <code>@radyybot</code>.</p><dl><div><dt>Administration</dt><dd>Read-only</dd></div><div><dt>Checks</dt><dd>Read-only</dd></div><div><dt>Contents</dt><dd>Read and write</dd></div><div><dt>Commit statuses</dt><dd>Read-only</dd></div><div><dt>Issues</dt><dd>Read and write</dd></div><div><dt>Pull requests</dt><dd>Read and write</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
+            r#"<p>Create a public GitHub App owned by <strong>{APP_OWNER}</strong> for <strong>{}</strong>. It reviews dependency pull requests, turns on GitHub auto-merge only after the checks pass, and answers trusted collaborators who write <code>@radyybot</code>.</p><dl><div><dt>Administration</dt><dd>Read branch protection and repository settings</dd></div><div><dt>Checks</dt><dd>Read CI results</dd></div><div><dt>Contents</dt><dd>Read changed files and Rady configuration</dd></div><div><dt>Commit statuses</dt><dd>Read legacy status checks</dd></div><div><dt>Issues</dt><dd>Read prompts and post replies</dd></div><div><dt>Pull requests</dt><dd>Read changes and post reviews</dd></div></dl><form method="post" action="{}"><input type="hidden" name="manifest" value="{}"><button type="submit">Continue to GitHub</button></form>"#,
             escape_html(repo),
             escape_html(&action),
             escape_html(&serde_json::to_string(&config)?)
@@ -551,14 +551,16 @@ mod tests {
     }
 
     #[test]
-    fn permissions_require_write_for_mutating_capabilities() -> Result<()> {
+    fn permissions_are_read_only_except_for_replies_and_reviews() -> Result<()> {
         let mut app = json!({"permissions": permissions(), "owner": {"login": APP_OWNER}});
+        assert_eq!(app["permissions"]["contents"], "read");
         require_app_owner(&app)?;
         require_permissions(&app)?;
-        app["permissions"]["contents"] = json!("read");
-        assert!(require_permissions(&app).is_err());
         app["permissions"]["contents"] = json!("write");
         require_permissions(&app)?;
+        app["permissions"]["contents"] = json!("none");
+        assert!(require_permissions(&app).is_err());
+        app["permissions"]["contents"] = json!("read");
         app["permissions"]["issues"] = json!("read");
         assert!(require_permissions(&app).is_err());
         app["permissions"]["issues"] = json!("write");
