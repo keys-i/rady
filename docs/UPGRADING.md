@@ -1,4 +1,4 @@
-# Upgrading to Rady 0.6.1
+# Upgrading to Rady 0.6.2
 
 Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
@@ -17,11 +17,11 @@ JSON specifications, retained evidence, harness environment variables, and `--ou
 
 ## Agent workflows
 
-Rady 0.6.1 adds local skills, opt-in stdio MCP servers, bounded conversation memory, and follow-up questions. Root `AGENTS.md` and `DESIGN.md` are read as pinned guidance for planning, implementation, and review. `.rady/context.json` may list up to 16 skill files and eight MCP servers; no server starts until it is named with `--mcp` on a write run.
+Rady 0.6.0 added local skills, opt-in stdio MCP servers, bounded conversation memory, and follow-up questions. Root `AGENTS.md` and `DESIGN.md` are read as pinned guidance for planning, implementation, and review. `.rady/context.json` may list up to 16 skill files and eight MCP servers; no server starts until it is named with `--mcp` on a write run.
 
 Read-only work uses `rady agent ask` and `rady agent follow-up` without creating an edit worktree. Change work remains isolated. Remote pull-request delivery records progressive task checkpoints; pass `--ghost` for one final verified commit. Obvious intent is classified locally, ambiguous intent uses the fast model path, and deep hosted answers chain an evidence brief into the final model.
 
-The central `keys-i/rady` orchestration workflow is the normal service host. It discovers App installations and refreshes their short-lived tokens itself. It polls every five minutes; it is not a webhook service.
+Rady 0.6.1 added the persistent App-authenticated service. The central `keys-i/rady` orchestration workflow discovers App installations and refreshes their short-lived tokens itself. It polls every five minutes; it is not a webhook service.
 
 An operator who needs a continuously running self-hosted deployment can instead start one persistent service with the App client ID and private-key file:
 
@@ -36,7 +36,7 @@ The scheduled Actions workflow remains a fallback and still supplies Dependabot 
 
 ## Central GitHub setup
 
-Rady 0.6.1 uses the public **radyybot** App and one central service. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys stay in the trusted `keys-i/rady` service, never in a target repository.
+Rady 0.6.2 adds one guided setup for the public **radyybot** App and central service. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys stay in the trusted `keys-i/rady` service, never in a target repository.
 
 Install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then use the guided setup:
 

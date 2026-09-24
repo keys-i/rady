@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.6.2](https://github.com/keys-i/rady/compare/v0.6.1...v0.6.2) (2026-09-24)
+
+### Features
+
+* add `rady setup` with repository and CI-check discovery
+* centralize radyybot orchestration without target-repository secrets or workflows
+
+### Security
+
+* verify checkout identity, consent receipts, and administrator access before setup
+* preflight bounded local configuration before browser or GitHub writes
+
+## [0.6.1](https://github.com/keys-i/rady/compare/v0.6.0...v0.6.1) (2026-09-24)
+
+### Features
+
+* add an App-authenticated service for mentions and pull-request reviews
+* mint and refresh short-lived installation tokens across installed repositories
+
+### Maintenance
+
+* split agent, delivery, provider, review, setup, and GitHub authentication code into focused modules
+
+## [0.6.0](https://github.com/keys-i/rady/compare/v0.5.8...v0.6.0) (2026-09-24)
+
+### Features
+
+* add `rady agent ask`, follow-ups, and the persistent service command
+* add bounded project guidance, explicit skills, selected local MCP servers, and conversation memory
+* add intent routing, evidence briefs, progressive checkpoints, and `--ghost`
+
+### Security
+
+* expand credential scrubbing for native harnesses and MCP processes
+
 ## [0.5.8](https://github.com/keys-i/rady/compare/v0.5.7...v0.5.8) (2026-09-22)
 
 
