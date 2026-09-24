@@ -236,15 +236,41 @@ fn request_models(
     prefer_last: Option<Provider>,
     provider_limit: Option<usize>,
 ) -> Result<(Value, Provider)> {
+    let any_key = Provider::ALL.into_iter().any(|provider| {
+        provider_permitted(provider, repository_private)
+            && env::var(provider.key_name())
+                .ok()
+                .is_some_and(|key| !key.is_empty())
+    });
+    request_models_with(
+        schema,
+        tier,
+        repository_private,
+        prefer_last,
+        provider_limit,
+        any_key,
+        credentials,
+        |model, credentials| call_with_retry(model, credentials, prompt, instructions, schema),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn request_models_with(
+    schema: &Value,
+    tier: Tier,
+    repository_private: Option<bool>,
+    prefer_last: Option<Provider>,
+    provider_limit: Option<usize>,
+    any_key: bool,
+    mut credentials_for: impl FnMut(
+        Provider,
+    ) -> std::result::Result<Option<Credentials>, ProviderFailure>,
+    mut call: impl FnMut(&HostedModel, &Credentials) -> std::result::Result<Value, ProviderFailure>,
+) -> Result<(Value, Provider)> {
     let permitted = Provider::ALL
         .into_iter()
         .filter(|provider| provider_permitted(*provider, repository_private))
         .collect::<Vec<_>>();
-    let any_key = permitted.iter().any(|provider| {
-        env::var(provider.key_name())
-            .ok()
-            .is_some_and(|key| !key.is_empty())
-    });
     let mut providers = provider_order(tier, &permitted);
     if let Some(prefer_last) = prefer_last {
         providers.sort_by_key(|provider| *provider == prefer_last);
@@ -254,7 +280,7 @@ fn request_models(
     let mut attempted_providers = 0;
     let mut had_credentials = false;
     for provider in providers {
-        let credentials = match credentials(provider) {
+        let credentials = match credentials_for(provider) {
             Ok(Some(credentials)) => {
                 had_credentials = true;
                 credentials
@@ -280,11 +306,17 @@ fn request_models(
                 if !attempted.insert((provider, model.id.clone())) {
                     continue;
                 }
-                match call_with_retry(&model, &credentials, prompt, instructions, schema) {
-                    Ok(answer) => {
-                        record_success(provider);
-                        return Ok((answer, provider));
-                    }
+                match call(&model, &credentials) {
+                    Ok(answer) => match validate_response(&answer, schema) {
+                        Ok(()) => {
+                            record_success(provider);
+                            return Ok((answer, provider));
+                        }
+                        Err(failure) => {
+                            record_failure(provider, &failure);
+                            push_failure(&mut failures, &model.label(), &failure);
+                        }
+                    },
                     Err(failure) => {
                         provider_blocked = matches!(
                             failure.kind,
@@ -717,6 +749,99 @@ fn strict_json_response(value: &str) -> std::result::Result<Value, ProviderFailu
         .ok_or_else(|| ProviderFailure::new(FailureKind::InvalidResponse, "returned invalid JSON"))
 }
 
+const MAX_SCHEMA_DEPTH: usize = 16;
+
+fn validate_response(value: &Value, schema: &Value) -> std::result::Result<(), ProviderFailure> {
+    response_matches_schema(value, schema, 0).map_err(|_| {
+        ProviderFailure::new(
+            FailureKind::InvalidResponse,
+            "returned JSON that did not match the requested response schema",
+        )
+    })
+}
+
+fn response_matches_schema(
+    value: &Value,
+    schema: &Value,
+    depth: usize,
+) -> std::result::Result<(), ()> {
+    if depth >= MAX_SCHEMA_DEPTH {
+        return Err(());
+    }
+    let schema = schema.as_object().ok_or(())?;
+    match schema.get("type").and_then(Value::as_str).ok_or(())? {
+        "object" => {
+            let object = value.as_object().ok_or(())?;
+            let properties = schema
+                .get("properties")
+                .map(|properties| properties.as_object().ok_or(()))
+                .transpose()?;
+            if schema.get("additionalProperties") == Some(&Value::Bool(false))
+                && object
+                    .keys()
+                    .any(|key| !properties.is_some_and(|properties| properties.contains_key(key)))
+            {
+                return Err(());
+            }
+            if let Some(required) = schema.get("required") {
+                let required = required.as_array().ok_or(())?;
+                if required
+                    .iter()
+                    .any(|name| name.as_str().is_none_or(|name| !object.contains_key(name)))
+                {
+                    return Err(());
+                }
+            }
+            if let Some(properties) = properties {
+                for (name, property_schema) in properties {
+                    if let Some(property) = object.get(name) {
+                        response_matches_schema(property, property_schema, depth + 1)?;
+                    }
+                }
+            }
+        }
+        "string" => {
+            let string = value.as_str().ok_or(())?;
+            let length = string.chars().count();
+            if schema
+                .get("minLength")
+                .and_then(Value::as_u64)
+                .is_some_and(|minimum| u64::try_from(length).unwrap_or(u64::MAX) < minimum)
+                || schema
+                    .get("maxLength")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|maximum| u64::try_from(length).unwrap_or(u64::MAX) > maximum)
+            {
+                return Err(());
+            }
+            if let Some(choices) = schema.get("enum") {
+                let choices = choices.as_array().ok_or(())?;
+                if !choices.iter().all(Value::is_string)
+                    || !choices.iter().any(|choice| choice == value)
+                {
+                    return Err(());
+                }
+            }
+        }
+        "array" => {
+            let array = value.as_array().ok_or(())?;
+            if schema
+                .get("maxItems")
+                .and_then(Value::as_u64)
+                .is_some_and(|maximum| u64::try_from(array.len()).unwrap_or(u64::MAX) > maximum)
+            {
+                return Err(());
+            }
+            let items = schema.get("items").ok_or(())?;
+            for item in array {
+                response_matches_schema(item, items, depth + 1)?;
+            }
+        }
+        _ => return Err(()),
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn answer_from_json(value: &str) -> Result<String> {
     answer_from_value(&strict_json_response(value).map_err(anyhow::Error::new)?)
@@ -814,5 +939,51 @@ mod tests {
         assert_eq!(answer_from_json(r#"{"answer":"ready"}"#).unwrap(), "ready");
         let error = anyhow!(HostedUnavailable("cooling down".to_owned()));
         assert!(is_hosted_unavailable(&error));
+    }
+
+    #[test]
+    fn rejects_invalid_response_before_accepting_a_later_valid_response() {
+        let schema = answer_schema();
+        let responses = [
+            json!({"answer": "ready", "unexpected": true}),
+            json!({"answer": "ready", "follow_ups": []}),
+        ];
+        assert!(validate_response(&responses[0], &schema).is_err());
+        let accepted = responses
+            .iter()
+            .find(|response| validate_response(response, &schema).is_ok())
+            .unwrap();
+        assert_eq!(accepted["answer"], "ready");
+    }
+
+    #[test]
+    fn retries_the_routing_loop_after_a_malformed_provider_response() {
+        with_router(|router| *router = RouterState::default());
+        let schema = answer_schema();
+        let mut responses = [
+            json!({"answer": "wrong shape", "unexpected": true}),
+            json!({"answer": "ready", "follow_ups": []}),
+        ]
+        .into_iter();
+        let result = request_models_with(
+            &schema,
+            Tier::Fast,
+            Some(false),
+            None,
+            None,
+            true,
+            |provider| {
+                Ok((provider == Provider::Gemini).then(|| Credentials {
+                    key: "test-key".to_owned(),
+                    account_id: None,
+                }))
+            },
+            |_, _| Ok(responses.next().unwrap()),
+        );
+        with_router(|router| *router = RouterState::default());
+
+        let (answer, provider) = result.unwrap();
+        assert_eq!(provider, Provider::Gemini);
+        assert_eq!(answer["answer"], "ready");
     }
 }

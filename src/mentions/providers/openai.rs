@@ -88,6 +88,13 @@ fn request_body(
     instructions: &str,
     schema: &Value,
 ) -> Value {
+    let instructions = if matches!(provider, Provider::Cloudflare | Provider::OpenRouter) {
+        format!(
+            "{instructions}\n\nReturn only a JSON value matching this response schema:\n{schema}"
+        )
+    } else {
+        instructions.to_owned()
+    };
     let mut body = json!({
         "model": model,
         "messages": [
@@ -139,6 +146,11 @@ mod tests {
             let body = request_body(provider, "model", "prompt", "instructions", &schema);
             assert_eq!(body[token_field], 1_600);
             assert_eq!(body.get("response_format").is_some(), structured);
+            let system = body["messages"][0]["content"].as_str().unwrap();
+            assert_eq!(system.contains("response schema"), !structured);
+            if !structured {
+                assert!(system.contains("\"answer\""));
+            }
         }
     }
 }
