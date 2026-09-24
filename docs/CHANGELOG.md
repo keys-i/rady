@@ -1,27 +1,17 @@
 # Changelog
 
-## [0.6.6](https://github.com/keys-i/rady/compare/v0.6.5...v0.6.6) (2026-09-25)
+## [0.6.6](https://github.com/keys-i/rady/compare/v0.6.3...v0.6.6) (2026-09-25)
 
 ### Features
 
 * add opt-in `rady code --browser` verification through a configured local browser MCP
-
-## [0.6.5](https://github.com/keys-i/rady/compare/v0.6.4...v0.6.5) (2026-09-25)
-
-### Features
-
+* add free-first routing across six providers with bounded catalogs, retries, cooldowns, and a Deep evidence scout
 * add optional authenticated-loopback Laya routing for intent and tier selection
 * treat temporary hosted-model outages as retryable service work
 
 ### Security
 
 * harden provider credential environments and align setup consent with the current Privacy policy
-
-## [0.6.4](https://github.com/keys-i/rady/compare/v0.6.3...v0.6.4) (2026-09-25)
-
-### Features
-
-* add free-first routing across six model providers, bounded catalogs and cooldowns, plus a Deep evidence scout
 
 ## [0.6.3](https://github.com/keys-i/rady/compare/v0.6.2...v0.6.3) (2026-09-25)
 

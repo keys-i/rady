@@ -11,15 +11,9 @@ Replace `.venv/bin/rady` with `rady`. `dependasolver` remains a compatibility na
 
 ## 0.6.6
 
-This compatible patch adds opt-in browser verification for frontend work. Configure a local MCP named `browser` in `.rady/context.json`, then select it with `rady code "Check http://127.0.0.1:3000" --browser`. The browser stays local and is started only for that write run.
+This compatible release adds opt-in browser verification for frontend work. Configure a local MCP named `browser` in `.rady/context.json`, then select it with `rady code "Check http://127.0.0.1:3000" --browser`. The browser stays local and starts only for that write run.
 
-## 0.6.5
-
-This compatible patch adds optional, authenticated-loopback Laya routing, retryable handling for temporary hosted-model outages, stricter provider credential isolation, and current Privacy-policy consent.
-
-## 0.6.4
-
-This compatible patch adds free-first routing across six providers. Catalogs, retries, and cooldowns are bounded; Deep work can first build a small evidence brief before synthesis.
+It also adds free-first routing across six providers with bounded catalogs, retries, cooldowns, and an evidence scout for Deep work. Optional authenticated-loopback Laya can classify intent and tier selection; temporary hosted-model outages remain retryable so pending work is preserved. Provider credential isolation and Privacy-policy consent are hardened.
 
 ## 0.6.3
 
