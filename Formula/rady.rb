@@ -2,8 +2,8 @@ class Rady < Formula
   desc "Checks agent-made changes and reviews Dependabot pull requests"
   homepage "https://github.com/keys-i/rady"
   url "https://github.com/keys-i/rady.git",
-      tag: "v0.6.3"
-  version "0.6.3"
+      tag: "v0.6.6"
+  version "0.6.6"
   license "MIT"
 
   depends_on "rust" => :build

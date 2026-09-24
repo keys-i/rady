@@ -1,4 +1,4 @@
-# Upgrading to Rady 0.6.3
+# Upgrading to Rady 0.6.6
 
 Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
@@ -8,6 +8,18 @@ target/release/rady --help
 ```
 
 Replace `.venv/bin/rady` with `rady`. `dependasolver` remains a compatibility name for `rady dependasolve`.
+
+## 0.6.6
+
+This compatible patch adds opt-in browser verification for frontend work. Configure a local MCP named `browser` in `.rady/context.json`, then select it with `rady code "Check http://127.0.0.1:3000" --browser`. The browser stays local and is started only for that write run.
+
+## 0.6.5
+
+This compatible patch adds optional, authenticated-loopback Laya routing, retryable handling for temporary hosted-model outages, stricter provider credential isolation, and current Privacy-policy consent.
+
+## 0.6.4
+
+This compatible patch adds free-first routing across six providers. Catalogs, retries, and cooldowns are bounded; Deep work can first build a small evidence brief before synthesis.
 
 ## 0.6.3
 
@@ -25,6 +37,8 @@ Rady 0.6.0 added local skills, opt-in stdio MCP servers, bounded conversation me
 
 Read-only work uses `rady agent ask` and `rady agent follow-up` without creating an edit worktree. Change work remains isolated. Remote pull-request delivery records progressive task checkpoints; pass `--ghost` for one final verified commit. Obvious intent is classified locally, ambiguous intent uses the fast model path, and deep hosted answers chain an evidence brief into the final model.
 
+For a self-hosted decision classifier, run Laya locally with `LAYA_HOST=127.0.0.1`, a non-empty `LAYA_API_KEY`, and `LAYA_PRELOAD=1`; set `RADY_LAYA_ENABLED=true` and the matching `RADY_LAYA_API_KEY`. Rady calls only `http://127.0.0.1:8000/v1/systemone`. Laya selects intent and a model tier only, cannot draft a response, and may only preserve or escalate the tier selected by deterministic rules. The existing hosted classifier remains the fallback. Laya needs operator-provided local compute and model storage (about 647–808 MB in its published guidance), so the GitHub-hosted service never enables it.
+
 Rady 0.6.1 added the persistent App-authenticated service. The central `keys-i/rady` orchestration workflow discovers App installations and refreshes their short-lived tokens itself. It polls every five minutes; it is not a webhook service.
 
 An operator who needs a continuously running self-hosted deployment can instead start one persistent service with the App client ID and private-key file:
@@ -40,7 +54,7 @@ The scheduled Actions workflow remains a fallback and still supplies Dependabot 
 
 ## Central GitHub setup
 
-Rady 0.6.2 adds one guided setup for the public **radyybot** App and central service. The private key, App client ID and slug, and Gemini, Cerebras, and optional xAI keys stay in the trusted `keys-i/rady` service, never in a target repository.
+Rady 0.6.2 adds one guided setup for the public **radyybot** App and central service. The private key, App client ID and slug, and configured model credentials stay in the trusted `keys-i/rady` service, never in a target repository.
 
 Install the App, review [Terms](TERMS.md) and [Privacy](PRIVACY.md), then use the guided setup:
 
@@ -60,17 +74,22 @@ Repository administrators install the App and run `rady setup`; they never confi
 
 Only an `OWNER`, `MEMBER`, or `COLLABORATOR` may use `@radyybot <prompt>`. It returns a concise, evidence-based answer; it cannot modify code, create a PR, or merge work.
 
-GitHub-hosted mentions prefer compatible Gemini and Cerebras models available to the central credentials. Rady inventories those provider catalogs at runtime and falls back after an unavailable model or quota response. Accessibility in a catalog is not a free-tier guarantee, and Rady never evades quotas or provider terms.
+GitHub-hosted mentions use compatible centrally configured models and fall back after an unavailable model or quota response. Groq and Cloudflare Workers AI have recurring free allocations under their provider terms; OpenRouter is a low-quota opt-in fallback. Catalog access is not an unlimited or guaranteed free tier, and Rady never rotates keys or accounts to evade quotas or provider terms.
 
 Public repository evidence may use configured providers. Private or unknown repositories need a separate central opt-in for each provider:
 
-| Provider | Central Actions secret | Private-repository variable |
+| Provider | Central service configuration | Private-repository variable |
 | --- | --- | --- |
 | Gemini | `RADY_GEMINI_API_KEY` | `RADY_GEMINI_PRIVATE_OK=true` |
 | Cerebras | `RADY_CEREBRAS_API_KEY` | `RADY_CEREBRAS_PRIVATE_OK=true` |
 | xAI (optional) | `RADY_XAI_API_KEY` | `RADY_XAI_PRIVATE_OK=true` |
+| Groq | `RADY_GROQ_API_KEY` | `RADY_GROQ_PRIVATE_OK=true` |
+| Cloudflare Workers AI | `RADY_CLOUDFLARE_API_TOKEN` and `RADY_CLOUDFLARE_ACCOUNT_ID` | `RADY_CLOUDFLARE_PRIVATE_OK=true` |
+| OpenRouter (low-quota fallback) | `RADY_OPENROUTER_API_KEY` | `RADY_OPENROUTER_PRIVATE_OK=true` |
 
 These values belong in `keys-i/rady`, not a target repository. See [Security](SECURITY.md) before enabling a provider for private content.
+
+The added processors advance the Privacy policy to `2026-09-25`. Re-run `rady setup` as a repository administrator to review and record fresh consent; central processing stays paused until then.
 
 ## Dependency reviews
 

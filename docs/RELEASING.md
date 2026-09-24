@@ -10,6 +10,8 @@ GitHub releases through `v0.5.8` were reconstructed from the exact default-branc
 
 An unpublished historical crates.io version may be recovered only from its verified source commit. Published crates are immutable; never rebuild an old version from newer source or move an existing tag.
 
+Versions 0.6.4 and 0.6.5 cannot be published from the 0.6.6 tree. Each immutable crate and tag must come from its own verified, versioned source state. This document does not claim that any external release exists.
+
 ## Before merging
 
 - Confirm `Cargo.toml` and `Cargo.lock` say the intended next version
