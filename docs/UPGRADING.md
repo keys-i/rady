@@ -17,7 +17,7 @@ JSON specifications, retained evidence, harness environment variables, and `--ou
 
 ## Agent workflows
 
-Rady 0.6.1 adds local skills, opt-in stdio MCP servers, bounded conversation memory, and follow-up questions. Root `AGENTS.md` and `DESIGN.md` are read as pinned guidance for planning, implementation, and review. `.rady/context.json` may list up to 16 skill files and eight MCP servers; no server starts until it is named with `--mcp` on a write run.
+Rady 0.6.0 added local skills, opt-in stdio MCP servers, bounded conversation memory, and follow-up questions. Root `AGENTS.md` and `DESIGN.md` are read as pinned guidance for planning, implementation, and review. `.rady/context.json` may list up to 16 skill files and eight MCP servers; no server starts until it is named with `--mcp` on a write run.
 
 Read-only work uses `rady agent ask` and `rady agent follow-up` without creating an edit worktree. Change work remains isolated. Remote pull-request delivery records progressive task checkpoints; pass `--ghost` for one final verified commit. Obvious intent is classified locally, ambiguous intent uses the fast model path, and deep hosted answers chain an evidence brief into the final model.
 
