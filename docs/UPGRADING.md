@@ -1,4 +1,4 @@
-# Upgrading to Rady 0.6.2
+# Upgrading to Rady 0.6.3
 
 Rady is a native Rust executable. The old Python package, virtual environments, `pip`, `uv`, and root Python launchers are gone.
 
@@ -8,6 +8,10 @@ target/release/rady --help
 ```
 
 Replace `.venv/bin/rady` with `rady`. `dependasolver` remains a compatibility name for `rady dependasolve`.
+
+## 0.6.3
+
+This is a compatible patch release. Setup now uses one readable seven-stage progress line, App authentication keeps JWTs out of process arguments, and new App manifests request read-only repository contents access. Existing App installations keep their current permissions; change **Contents** to **Read-only** in the App settings to adopt the narrower permission.
 
 ## What remains compatible
 

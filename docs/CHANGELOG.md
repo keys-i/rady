@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.3](https://github.com/keys-i/rady/compare/v0.6.2...v0.6.3) (2026-09-25)
+
+### Fixes
+
+* keep animated terminal progress cancellable, non-interleaving, and quiet outside interactive terminals
+* pass GitHub App JWTs through standard input instead of process arguments
+* bound and neutralize generated pull-request text before publication
+
+### Interface
+
+* make setup a seven-stage flow with one gradual, readable progress line
+* make service, review, and recovery messages shorter and more natural
+
+### Security
+
+* request read-only repository contents access for new GitHub App manifests
+
 ## [0.6.2](https://github.com/keys-i/rady/compare/v0.6.1...v0.6.2) (2026-09-24)
 
 ### Features
