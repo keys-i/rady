@@ -20,7 +20,11 @@ Only `OWNER`, `MEMBER`, and `COLLABORATOR` actors can invoke `@radyybot <prompt>
 
 ## Hosted models
 
-GitHub-hosted mentions use compatible Gemini and Cerebras models visible to the configured accounts, with xAI as an optional fallback. Model catalogs show accessibility, not price, capacity, or a free-tier entitlement. Rady handles unavailable models and quota responses by trying the next permitted model; it does not rotate accounts, evade limits, or otherwise bypass provider controls.
+GitHub-hosted mentions use compatible configured models from Gemini, Cerebras, xAI, Groq, Cloudflare Workers AI, and OpenRouter. Groq and Cloudflare Workers AI have recurring free allocations subject to their provider terms; OpenRouter is an explicit low-quota fallback. Model catalogs show accessibility, not price, capacity, or an unlimited entitlement. Rady handles unavailable models and quota responses by trying the next permitted provider; it does not rotate keys or accounts, evade limits, or otherwise bypass provider controls.
+
+Cooldowns and rejected-model memory last for the service process. The scheduled Actions fallback starts cold on each run, so remove a credential that keeps returning an entitlement error; the persistent service retains health state between cycles.
+
+An operator may opt into a local Laya classifier with `RADY_LAYA_ENABLED=true`. Run Laya with `LAYA_HOST=127.0.0.1` and a non-empty `LAYA_API_KEY`, then set `RADY_LAYA_API_KEY` to the same value. Rady connects only to `http://127.0.0.1:8000/v1/systemone`; the key is removed from native-agent children and must not be placed in target repositories. Laya receives only the bounded decision input needed to classify intent and model tier. It cannot generate replies, lower a selected tier, or replace deterministic and hosted-classifier fallbacks. GitHub-hosted workflows never enable it because a hosted runner cannot safely reach an operator's loopback service.
 
 Provider keys remain central and are removed from native-agent children. Rady sends a bounded copy of relevant issue or pull-request evidence only to the selected provider. Public repository evidence may use configured providers. Private and unknown repository evidence is blocked unless the corresponding central variable is exactly `true`:
 
@@ -29,6 +33,9 @@ Provider keys remain central and are removed from native-agent children. Rady se
 | Gemini | `RADY_GEMINI_PRIVATE_OK` |
 | Cerebras | `RADY_CEREBRAS_PRIVATE_OK` |
 | xAI | `RADY_XAI_PRIVATE_OK` |
+| Groq | `RADY_GROQ_PRIVATE_OK` |
+| Cloudflare Workers AI | `RADY_CLOUDFLARE_PRIVATE_OK` |
+| OpenRouter | `RADY_OPENROUTER_PRIVATE_OK` |
 
 Do not opt in when you are not allowed to disclose that repository content. Provider retention, training, and regional processing are governed by the provider account and terms in effect for that request.
 
@@ -41,6 +48,8 @@ Rady blocks known credential and private-key files, works in isolated worktrees,
 The central service performs read-only reviews and leaves merging under repository protection. A self-hosted deployment uses `--app-client-id` and `--app-private-key-file`; Rady reads the bounded key only to refresh tokens and never writes those tokens to disk. `--token-command` remains advanced compatibility for a dedicated secret broker that prints one fresh installation token to stdout per cycle. Conflicted updates remain for an operator to repair with local `rady code`; local credentials and retained evidence stay under that operator's control.
 
 Repository `AGENTS.md`, `DESIGN.md`, configured skills, issue comments, and MCP definitions are untrusted input. Guidance must be regular, non-symlink UTF-8 files under the repository root and is pinned for the run. Skills are text only. MCP is disabled by default, supports selected local stdio commands only, and runs with credential-shaped environment variables removed. Selecting an MCP server authorises that local program; it is privileged local code, so inspect it first.
+
+`rady code --browser` is an explicit write-run opt-in for a locally preinstalled, reviewed, version-pinned Microsoft Playwright MCP command named `playwright-mcp`. The reserved `browser` entry accepts only the exact isolated, sandboxed, no-WebMCP, no-service-worker, bounded argument set shown in the README. Rady never downloads it and enables it only when selected with `--browser` or the equivalent `--mcp browser`. It is still privileged local code, not a sandbox: use only an explicit local or user-supplied preview URL, do not log in, use production credentials, upload, download, grant permissions, or make production mutations. Read-only agent questions and the hosted service never receive browser MCP access.
 
 Conversation memory is private, atomic, bounded, and stores only the visible questions and answers. It does not store provider keys or hidden reasoning. Progressive commits exist only inside Rady's isolated delivery branch until every gate passes; `--ghost` changes commit shape, not verification.
 

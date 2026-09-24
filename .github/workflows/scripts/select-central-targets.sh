@@ -44,7 +44,7 @@ configuration_for() {
     {
       accepted: (
         .agreement.terms == "2026-09-23" and
-        .agreement.privacy == "2026-09-23" and
+        .agreement.privacy == "2026-09-25" and
         (.agreement.accepted_by | type == "string" and length > 0 and length <= 100) and
         (.agreement.accepted_at_unix | type == "number" and . > 0 and floor == .) and
         (.agreement.issue | type == "number" and . > 0 and floor == .) and
@@ -102,7 +102,7 @@ receipt_is_valid() {
       .id == $comment and
       .issue_url == ("https://api.github.com/repos/" + $repository + "/issues/" + ($issue | tostring)) and
       .user.login == $signer and
-      .body == ("Rady service agreement acceptance\\n\\nI accept the Rady Terms of Use (2026-09-23) and Privacy Policy (2026-09-23) for " + $repository + ".")
+      .body == ("Rady service agreement acceptance\\n\\nI accept the Rady Terms of Use (2026-09-23) and Privacy Policy (2026-09-25) for " + $repository + ".")
     ' <<<"$comment_value" >/dev/null || return 1
   jq -e '.permission == "admin"' <<<"$permission" >/dev/null
 }

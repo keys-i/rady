@@ -1,6 +1,6 @@
 # Rady privacy policy
 
-Effective 23 September 2026 · version `2026-09-23`
+Effective 25 September 2026 · version `2026-09-25`
 
 This policy describes the hosted radyybot service maintained through `keys-i/rady`. A self-hosted Rady operator is responsible for that deployment's privacy practices.
 
@@ -12,7 +12,9 @@ Rady uses this information to authenticate requests, answer `@radyybot` mentions
 
 ## Where information goes
 
-GitHub hosts the App installation, repository data, comments, reviews, configuration and Actions logs. Hosted model requests may send a bounded copy of relevant evidence to Google Gemini, Cerebras, or optional xAI. Public repositories may use configured providers by default. Private or unknown repositories require a separate per-provider opt-in. Each provider handles submitted data under its own terms and privacy controls, and may process it in the United States or other countries listed in its policy.
+GitHub hosts the App installation, repository data, comments, reviews, configuration and Actions logs. Hosted model requests may send a bounded copy of relevant evidence to Google Gemini, Cerebras, xAI, Groq, Cloudflare Workers AI, or OpenRouter when centrally configured. Public repositories may use configured providers by default. Private or unknown repositories require a separate per-provider opt-in. Each provider handles submitted data under its own terms and privacy controls, and may process it in the United States or other countries listed in its policy.
+
+A self-hosted operator may enable Laya for intent and model-tier decisions. Rady sends its bounded input only to an authenticated fixed loopback endpoint on the same machine; Laya does not generate the answer or receive provider credentials.
 
 App private keys and model credentials stay in the `keys-i/rady` GitHub Actions secret store. Rady removes them from native agent children and does not write them into target repositories or model prompts.
 

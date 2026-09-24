@@ -7,7 +7,7 @@ use crate::Result;
 use crate::github;
 
 pub(super) const TERMS_VERSION: &str = "2026-09-23";
-pub(super) const PRIVACY_VERSION: &str = "2026-09-23";
+pub(super) const PRIVACY_VERSION: &str = "2026-09-25";
 const CONSENT_ISSUE_TITLE: &str = "Rady service agreement";
 
 pub(super) fn agreement(repo: &str) -> Result<Value> {
