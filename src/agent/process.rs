@@ -21,6 +21,11 @@ const SENSITIVE_ENVIRONMENT: &[&str] = &[
     "RADY_GEMINI_API_KEY",
     "RADY_CEREBRAS_API_KEY",
     "RADY_XAI_API_KEY",
+    "RADY_GROQ_API_KEY",
+    "RADY_CLOUDFLARE_API_TOKEN",
+    "RADY_CLOUDFLARE_ACCOUNT_ID",
+    "RADY_OPENROUTER_API_KEY",
+    "RADY_LAYA_API_KEY",
     "RADY_APP_PRIVATE_KEY",
     "RADY_APP_PRIVATE_KEY_FILE",
     "RADY_APP_CLIENT_ID",
@@ -356,6 +361,7 @@ mod tests {
         }
         for name in [
             "ACME_API_KEY",
+            "RADY_LAYA_API_KEY",
             "CLOUD_TOKEN",
             "AWS_PROFILE",
             "GOOGLE_APPLICATION_CREDENTIALS",

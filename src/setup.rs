@@ -535,9 +535,20 @@ mod tests {
             "RADY_GEMINI_API_KEY",
             "RADY_CEREBRAS_API_KEY",
             "RADY_XAI_API_KEY",
+            "RADY_GROQ_API_KEY",
+            "RADY_CLOUDFLARE_API_TOKEN",
+            "RADY_CLOUDFLARE_ACCOUNT_ID",
+            "RADY_OPENROUTER_API_KEY",
+            "RADY_GROQ_PRIVATE_OK",
+            "RADY_CLOUDFLARE_PRIVATE_OK",
+            "RADY_OPENROUTER_PRIVATE_OK",
         ] {
             assert!(orchestrator.contains(secret));
             assert!(!serde_json::to_string(&configuration)?.contains(secret));
+        }
+        for local in ["RADY_LAYA_ENABLED", "RADY_LAYA_API_KEY"] {
+            assert!(!serde_json::to_string(&configuration)?.contains(local));
+            assert!(!orchestrator.contains(local));
         }
         assert!(orchestrator.contains("rady agent serve --once"));
         assert!(!orchestrator.contains("--owner"));

@@ -145,7 +145,7 @@ pub fn follow_up(id: &str, question: &str, config: &SessionConfig) -> Result<Ses
 }
 
 pub fn classify_request(request: &str, config: &SessionConfig) -> Intent {
-    let intent = routing::classify_request(request);
+    let intent = routing::classify_request_with_laya(request);
     if intent != Intent::Ambiguous {
         return intent;
     }
@@ -186,7 +186,7 @@ fn answer(
         "conversation": memory.messages,
         "repository_guidance": context.guidance(),
     });
-    let tier = routing::select(&json!({
+    let tier = routing::select_with_laya(&json!({
         "request": memory.messages.last().map(|message| message.text.as_str()).unwrap_or_default(),
         "body": context.guidance(),
     }));

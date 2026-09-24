@@ -4,11 +4,13 @@ use serde_json::Value;
 
 use crate::Result;
 
+mod laya;
+
 const MAX_CHOICES: usize = 8;
 const MAX_CHOICE_CHARS: usize = 200;
 const MAX_TEXT_BYTES: usize = 16_000;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Tier {
     Fast,
     Balanced,
@@ -81,6 +83,15 @@ pub fn classify_request(request: &str) -> Intent {
         Intent::ReadOnly
     } else {
         Intent::Ambiguous
+    }
+}
+
+pub fn classify_request_with_laya(request: &str) -> Intent {
+    let intent = classify_request(request);
+    if intent == Intent::Ambiguous {
+        laya::classify_intent(request).unwrap_or(intent)
+    } else {
+        intent
     }
 }
 
@@ -194,6 +205,15 @@ pub fn select(evidence: &Value) -> Tier {
         Tier::Balanced
     } else {
         Tier::Fast
+    }
+}
+
+pub fn select_with_laya(evidence: &Value) -> Tier {
+    let tier = select(evidence);
+    if tier == Tier::Deep {
+        tier
+    } else {
+        laya::select_tier(evidence).map_or(tier, |decision| tier.max(decision))
     }
 }
 

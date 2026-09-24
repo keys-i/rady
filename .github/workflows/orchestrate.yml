@@ -31,9 +31,16 @@ jobs:
           RADY_GEMINI_API_KEY: ${{ secrets.RADY_GEMINI_API_KEY }}
           RADY_CEREBRAS_API_KEY: ${{ secrets.RADY_CEREBRAS_API_KEY }}
           RADY_XAI_API_KEY: ${{ secrets.RADY_XAI_API_KEY }}
+          RADY_GROQ_API_KEY: ${{ secrets.RADY_GROQ_API_KEY }}
+          RADY_CLOUDFLARE_API_TOKEN: ${{ secrets.RADY_CLOUDFLARE_API_TOKEN }}
+          RADY_CLOUDFLARE_ACCOUNT_ID: ${{ vars.RADY_CLOUDFLARE_ACCOUNT_ID }}
+          RADY_OPENROUTER_API_KEY: ${{ secrets.RADY_OPENROUTER_API_KEY }}
           RADY_GEMINI_PRIVATE_OK: ${{ vars.RADY_GEMINI_PRIVATE_OK || 'false' }}
           RADY_CEREBRAS_PRIVATE_OK: ${{ vars.RADY_CEREBRAS_PRIVATE_OK || 'false' }}
           RADY_XAI_PRIVATE_OK: ${{ vars.RADY_XAI_PRIVATE_OK || 'false' }}
+          RADY_GROQ_PRIVATE_OK: ${{ vars.RADY_GROQ_PRIVATE_OK || 'false' }}
+          RADY_CLOUDFLARE_PRIVATE_OK: ${{ vars.RADY_CLOUDFLARE_PRIVATE_OK || 'false' }}
+          RADY_OPENROUTER_PRIVATE_OK: ${{ vars.RADY_OPENROUTER_PRIVATE_OK || 'false' }}
           RADY_MODEL: ${{ vars.RADY_MODEL || '' }}
           RADY_MODEL_CHOICES: ${{ vars.RADY_MODEL_CHOICES || '' }}
           RADY_HARNESS: ${{ vars.RADY_HARNESS || 'codex' }}

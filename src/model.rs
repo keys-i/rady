@@ -56,7 +56,7 @@ pub fn model_review(
             &evidence,
             &format!("{STYLE} {INSTRUCTIONS}"),
             &schema,
-            routing::select(context),
+            routing::select_with_laya(context),
             repository_private,
         )?
     } else {

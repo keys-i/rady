@@ -44,12 +44,6 @@ on:
     secrets:
       app-private-key:
         required: true
-      gemini-api-key:
-        required: false
-      cerebras-api-key:
-        required: false
-      xai-api-key:
-        required: false
 
 permissions: {}
 
@@ -248,13 +242,7 @@ jobs:
           RADY_MODEL: ${{ inputs.model }}
           RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
           RADY_HARNESS: ${{ inputs.harness }}
-          RADY_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
-          RADY_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
-          RADY_XAI_API_KEY: ${{ secrets.xai-api-key }}
           RADY_REPOSITORY_PRIVATE: ${{ inputs.repository-private }}
-          RADY_GEMINI_PRIVATE_OK: ${{ vars.RADY_GEMINI_PRIVATE_OK || 'false' }}
-          RADY_CEREBRAS_PRIVATE_OK: ${{ vars.RADY_CEREBRAS_PRIVATE_OK || 'false' }}
-          RADY_XAI_PRIVATE_OK: ${{ vars.RADY_XAI_PRIVATE_OK || 'false' }}
           GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           REQUIRED_CHECKS: ${{ inputs.required-checks }}

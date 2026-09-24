@@ -15,9 +15,9 @@ use crate::routing::{self, Tier};
 
 mod providers;
 
-pub(crate) use providers::hosted_json_answer;
+pub(crate) use providers::{hosted_json_answer, is_hosted_unavailable};
 
-use providers::{answer_from_value, answer_schema, bool_environment, valid_model_id};
+use providers::{answer_from_value, answer_schema, bool_environment, valid_slug};
 
 const MAX_COMMENT: usize = 4_000;
 const MAX_ANSWER: usize = 6_000;
@@ -115,7 +115,7 @@ fn prior_reply_exists(comments: &[Value], comment: u64) -> bool {
 fn app_slug() -> String {
     env::var("RADY_APP_SLUG")
         .ok()
-        .filter(|slug| valid_model_id(slug))
+        .filter(|slug| valid_slug(slug))
         .unwrap_or_else(|| "radyybot".to_owned())
 }
 
@@ -181,7 +181,7 @@ fn answer(
     if issue["pull_request"].is_object() {
         evidence["pull_request"] = pull_evidence(github, number)?;
     }
-    let tier = routing::select(&evidence);
+    let tier = routing::select_with_laya(&evidence);
     let evidence = serde_json::to_string(&evidence)?;
     if evidence.len() > MAX_EVIDENCE_BYTES {
         bail!("mention evidence is too large to send to a hosted model");

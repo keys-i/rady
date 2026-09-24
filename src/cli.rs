@@ -746,20 +746,11 @@ fn native_agent(arguments: AgentArgs) -> Result<()> {
     };
     let binary = agent::which(&program).ok_or_else(|| anyhow!("install the selected harness"))?;
     let mut command = Command::new(binary);
-    command.args(prefix).args(arguments.arguments);
-    for name in [
-        "OPENAI_API_KEY",
-        "CODEX_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "RADY_GEMINI_API_KEY",
-        "RADY_CEREBRAS_API_KEY",
-        "RADY_XAI_API_KEY",
-        "GH_TOKEN",
-        "GITHUB_TOKEN",
-        "RADY_PUSH_TOKEN",
-    ] {
-        command.env_remove(name);
-    }
+    command
+        .env_clear()
+        .envs(agent::safe_environment())
+        .args(prefix)
+        .args(arguments.arguments);
     let status = command
         .status()
         .context("could not run native harness command")?;

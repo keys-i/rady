@@ -1,52 +1,168 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::path::Path;
-use std::time::Duration;
+use std::error::Error;
+use std::fmt;
+use std::sync::{Mutex, OnceLock};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, bail};
 use serde_json::{Value, json};
-use tempfile::tempdir;
 
 use super::{MAX_ANSWER, MAX_EVIDENCE_BYTES};
 use crate::Result;
-use crate::agent;
 use crate::routing::Tier;
 
-const MAX_PROVIDER_RESPONSE_BYTES: usize = 24_000;
+mod gemini;
+mod http;
+mod openai;
+mod xai;
+
 const MAX_CATALOG_MODELS: usize = 16;
-const PROVIDER_TIMEOUT: Duration = Duration::from_secs(20);
-const HTTP_STATUS_MARKER: &str = "\nRADY_HTTP_STATUS:";
+const MAX_MODELS_PER_PROVIDER: usize = 2;
+const MAX_FAILURES: usize = 8;
+const MAX_REJECTED_MODELS: usize = 32;
+const CATALOG_TTL: Duration = Duration::from_secs(30 * 60);
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum Provider {
+    Gemini,
+    Groq,
+    Cloudflare,
+    Cerebras,
+    OpenRouter,
+    Xai,
+}
+
+impl Provider {
+    const ALL: [Self; 6] = [
+        Self::Gemini,
+        Self::Groq,
+        Self::Cloudflare,
+        Self::Cerebras,
+        Self::OpenRouter,
+        Self::Xai,
+    ];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Gemini => "Gemini",
+            Self::Groq => "Groq",
+            Self::Cloudflare => "Cloudflare Workers AI",
+            Self::Cerebras => "Cerebras",
+            Self::OpenRouter => "OpenRouter",
+            Self::Xai => "xAI",
+        }
+    }
+
+    const fn key_name(self) -> &'static str {
+        match self {
+            Self::Gemini => "RADY_GEMINI_API_KEY",
+            Self::Groq => "RADY_GROQ_API_KEY",
+            Self::Cloudflare => "RADY_CLOUDFLARE_API_TOKEN",
+            Self::Cerebras => "RADY_CEREBRAS_API_KEY",
+            Self::OpenRouter => "RADY_OPENROUTER_API_KEY",
+            Self::Xai => "RADY_XAI_API_KEY",
+        }
+    }
+
+    const fn private_opt_in(self) -> &'static str {
+        match self {
+            Self::Gemini => "RADY_GEMINI_PRIVATE_OK",
+            Self::Groq => "RADY_GROQ_PRIVATE_OK",
+            Self::Cloudflare => "RADY_CLOUDFLARE_PRIVATE_OK",
+            Self::Cerebras => "RADY_CEREBRAS_PRIVATE_OK",
+            Self::OpenRouter => "RADY_OPENROUTER_PRIVATE_OK",
+            Self::Xai => "RADY_XAI_PRIVATE_OK",
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum HostedModel {
-    Gemini(String),
-    Cerebras(String),
-    Xai(String),
+struct HostedModel {
+    provider: Provider,
+    id: String,
 }
 
 impl HostedModel {
-    const fn provider(&self) -> &'static str {
-        match self {
-            Self::Gemini(_) => "gemini",
-            Self::Cerebras(_) => "cerebras",
-            Self::Xai(_) => "xai",
-        }
-    }
-
-    fn label(self) -> String {
-        match self {
-            Self::Gemini(model) => format!("Gemini {model}"),
-            Self::Cerebras(model) => format!("Cerebras {model}"),
-            Self::Xai(model) => format!("xAI {model}"),
-        }
-    }
-
-    fn id(&self) -> &str {
-        match self {
-            Self::Gemini(model) | Self::Cerebras(model) | Self::Xai(model) => model,
-        }
+    fn label(&self) -> String {
+        format!("{} {}", self.provider.name(), self.id)
     }
 }
+
+struct Credentials {
+    key: String,
+    account_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FailureKind {
+    Authentication,
+    Payment,
+    RateLimit,
+    Model,
+    Transient,
+    InvalidResponse,
+}
+
+#[derive(Clone, Debug)]
+struct ProviderFailure {
+    kind: FailureKind,
+    detail: String,
+    retry_after: Option<Duration>,
+}
+
+impl ProviderFailure {
+    fn new(kind: FailureKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+            retry_after: None,
+        }
+    }
+
+    fn retry_after(mut self, retry_after: Option<Duration>) -> Self {
+        self.retry_after = retry_after;
+        self
+    }
+}
+
+impl fmt::Display for ProviderFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.detail)
+    }
+}
+
+impl Error for ProviderFailure {}
+
+#[derive(Debug)]
+struct HostedUnavailable(String);
+
+impl fmt::Display for HostedUnavailable {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl Error for HostedUnavailable {}
+
+#[derive(Default)]
+struct ProviderState {
+    catalog: Vec<String>,
+    catalog_until: Option<Instant>,
+    cooldown_until: Option<Instant>,
+    rejected_models: BTreeSet<String>,
+    disabled: bool,
+}
+
+#[derive(Default)]
+struct RouterState {
+    providers: BTreeMap<Provider, ProviderState>,
+    rotation: usize,
+}
+
+// ponytail: one process-wide router is enough while provider calls stay sequential
+static ROUTER: OnceLock<Mutex<RouterState>> = OnceLock::new();
 
 pub(crate) fn hosted_json_answer(
     evidence: &str,
@@ -58,126 +174,422 @@ pub(crate) fn hosted_json_answer(
     if serde_json::to_vec(schema)?.len() > 16_000 {
         bail!("hosted response schema is too large");
     }
-    let gemini_allowed = external_provider_permitted(
-        repository_private,
-        bool_environment("RADY_GEMINI_PRIVATE_OK") == Some(true),
-    );
-    let xai_allowed = external_provider_permitted(
-        repository_private,
-        bool_environment("RADY_XAI_PRIVATE_OK") == Some(true),
-    );
-    let cerebras_allowed = external_provider_permitted(
-        repository_private,
-        bool_environment("RADY_CEREBRAS_PRIVATE_OK") == Some(true),
-    );
-    let models = hosted_models(tier, gemini_allowed, cerebras_allowed, xai_allowed);
     let prompt = provider_prompt(evidence)?;
-    match chained_request(&models, &prompt, instructions, schema, tier) {
-        Ok(answer) => Ok(answer),
-        Err(primary) => {
-            let mut discovered = models.clone();
-            discovered_models(
-                tier,
-                &mut discovered,
-                gemini_allowed,
-                cerebras_allowed,
-                xai_allowed,
-            );
-            if discovered == models {
-                return Err(primary);
-            }
-            chained_request(&discovered, &prompt, instructions, schema, tier).map_err(|fallback| {
-                anyhow!("known models failed: {primary}; catalog fallback failed: {fallback}")
-            })
-        }
-    }
+    chained_request(&prompt, instructions, schema, tier, repository_private)
+}
+
+pub(crate) fn is_hosted_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<HostedUnavailable>().is_some()
 }
 
 fn chained_request(
-    models: &[HostedModel],
     prompt: &str,
     instructions: &str,
     schema: &Value,
     tier: Tier,
+    repository_private: Option<bool>,
 ) -> Result<Value> {
     let mut prompt = prompt.to_owned();
-    let mut models = models.to_vec();
+    let mut scout_provider = None;
     if tier == Tier::Deep {
-        let mut scouts = models.clone();
-        scouts.sort_by_key(|model| model_rank(model.id(), Tier::Fast));
         let brief_schema = json!({
-            "type": "object", "additionalProperties": false,
+            "type": "object",
+            "additionalProperties": false,
             "properties": {"brief": {"type": "string", "minLength": 1, "maxLength": 4000}},
             "required": ["brief"]
         });
         if let Ok((brief, used)) = request_models(
-            &scouts,
             &prompt,
             "Produce a concise evidence brief of concrete facts, uncertainties and decisions for another model. Do not provide private chain-of-thought. Return only JSON matching the schema.",
             &brief_schema,
+            Tier::Fast,
+            repository_private,
+            None,
+            Some(1),
         ) {
             if let Some(brief) = brief["brief"].as_str() {
                 prompt.push_str("\n\nIndependent evidence brief:\n");
                 prompt.extend(brief.chars().take(4_000));
-                models.sort_by_key(|model| model == &used);
+                scout_provider = Some(used);
             }
         }
     }
-    request_models(&models, &prompt, instructions, schema).map(|(answer, _)| answer)
+    request_models(
+        &prompt,
+        instructions,
+        schema,
+        tier,
+        repository_private,
+        scout_provider,
+        None,
+    )
+    .map(|(answer, _)| answer)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn request_models(
-    models: &[HostedModel],
     prompt: &str,
     instructions: &str,
     schema: &Value,
-) -> Result<(Value, HostedModel)> {
-    let mut failures = Vec::with_capacity(models.len());
-    let mut unavailable = BTreeSet::new();
-    for model in models.iter().cloned() {
-        let provider = model.provider();
-        if unavailable.contains(provider) {
-            continue;
-        }
-        let key_name = match &model {
-            HostedModel::Gemini(_) => "RADY_GEMINI_API_KEY",
-            HostedModel::Cerebras(_) => "RADY_CEREBRAS_API_KEY",
-            HostedModel::Xai(_) => "RADY_XAI_API_KEY",
-        };
-        let Some(key) = env::var(key_name).ok().filter(|key| !key.is_empty()) else {
-            continue;
-        };
-        if !valid_api_key(&key) {
-            bail!("{key_name} is invalid");
-        }
-        let result = match &model {
-            HostedModel::Gemini(model) => gemini_answer(prompt, model, &key, instructions, schema),
-            HostedModel::Cerebras(model) => {
-                cerebras_answer(prompt, model, &key, instructions, schema)
+    tier: Tier,
+    repository_private: Option<bool>,
+    prefer_last: Option<Provider>,
+    provider_limit: Option<usize>,
+) -> Result<(Value, Provider)> {
+    let permitted = Provider::ALL
+        .into_iter()
+        .filter(|provider| provider_permitted(*provider, repository_private))
+        .collect::<Vec<_>>();
+    let any_key = permitted.iter().any(|provider| {
+        env::var(provider.key_name())
+            .ok()
+            .is_some_and(|key| !key.is_empty())
+    });
+    let mut providers = provider_order(tier, &permitted);
+    if let Some(prefer_last) = prefer_last {
+        providers.sort_by_key(|provider| *provider == prefer_last);
+    }
+    let mut failures = Vec::new();
+    let mut attempted = BTreeSet::new();
+    let mut attempted_providers = 0;
+    let mut had_credentials = false;
+    for provider in providers {
+        let credentials = match credentials(provider) {
+            Ok(Some(credentials)) => {
+                had_credentials = true;
+                credentials
             }
-            HostedModel::Xai(model) => xai_answer(prompt, model, &key, instructions, schema),
+            Ok(None) => continue,
+            Err(failure) => {
+                record_failure(provider, &failure);
+                push_failure(&mut failures, provider.name(), &failure);
+                continue;
+            }
         };
-        match result {
-            Ok(answer) => return Ok((answer, model)),
-            Err(error) => {
-                let message = error.to_string();
-                if ["HTTP 401", "HTTP 402", "HTTP 403", "HTTP 429", "HTTP 503"]
-                    .iter()
-                    .any(|status| message.contains(status))
-                {
-                    unavailable.insert(provider);
+        if provider_limit.is_some_and(|limit| attempted_providers >= limit) {
+            break;
+        }
+        attempted_providers += 1;
+        let mut models = known_provider_models(provider, tier);
+        let mut catalog_checked = false;
+        let mut next_model = 0;
+        loop {
+            let mut provider_blocked = false;
+            while let Some(model) = models.get(next_model).cloned() {
+                next_model += 1;
+                if !attempted.insert((provider, model.id.clone())) {
+                    continue;
                 }
-                failures.push(format!("{}: {message}", model.label()));
+                match call_with_retry(&model, &credentials, prompt, instructions, schema) {
+                    Ok(answer) => {
+                        record_success(provider);
+                        return Ok((answer, provider));
+                    }
+                    Err(failure) => {
+                        provider_blocked = matches!(
+                            failure.kind,
+                            FailureKind::Authentication
+                                | FailureKind::Payment
+                                | FailureKind::RateLimit
+                                | FailureKind::Transient
+                        );
+                        record_failure(provider, &failure);
+                        if failure.kind == FailureKind::Model {
+                            record_rejected_model(provider, &model.id);
+                        }
+                        push_failure(&mut failures, &model.label(), &failure);
+                        if provider_blocked {
+                            break;
+                        }
+                    }
+                }
+            }
+            if provider_blocked || catalog_checked {
+                break;
+            }
+            catalog_checked = true;
+            match catalog_provider_models(provider, tier, &credentials) {
+                Ok(discovered) => {
+                    let before = models.len();
+                    models.extend(
+                        discovered.into_iter().filter(|model| {
+                            !attempted.contains(&(model.provider, model.id.clone()))
+                        }),
+                    );
+                    if models.len() == before {
+                        break;
+                    }
+                }
+                Err(failure) => {
+                    record_failure(provider, &failure);
+                    push_failure(&mut failures, provider.name(), &failure);
+                    break;
+                }
             }
         }
     }
+
     if !failures.is_empty() {
-        bail!(
-            "hosted model response failed: {}; no answer was posted",
+        return Err(anyhow!(HostedUnavailable(format!(
+            "hosted models are temporarily unavailable: {}; nothing was posted",
             failures.join("; ")
-        );
+        ))));
+    }
+    if any_key || had_credentials {
+        return Err(anyhow!(HostedUnavailable(
+            "hosted models are cooling down; nothing was posted and the next service pass will retry"
+                .to_owned()
+        )));
     }
     bail!("no permitted hosted model key is available and Codex is not signed in")
+}
+
+fn call_with_retry(
+    model: &HostedModel,
+    credentials: &Credentials,
+    prompt: &str,
+    instructions: &str,
+    schema: &Value,
+) -> std::result::Result<Value, ProviderFailure> {
+    let call = || match model.provider {
+        Provider::Gemini => gemini::answer(prompt, &model.id, credentials, instructions, schema),
+        Provider::Groq | Provider::Cloudflare | Provider::Cerebras | Provider::OpenRouter => {
+            openai::answer(
+                model.provider,
+                prompt,
+                &model.id,
+                credentials,
+                instructions,
+                schema,
+            )
+        }
+        Provider::Xai => xai::answer(prompt, &model.id, credentials, instructions, schema),
+    };
+    match call() {
+        Err(failure) if failure.kind == FailureKind::Transient => {
+            thread::sleep(transient_retry_delay());
+            call()
+        }
+        result => result,
+    }
+}
+
+fn transient_retry_delay() -> Duration {
+    let jitter = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.subsec_millis() as u64 % 251);
+    Duration::from_millis(250 + jitter)
+}
+
+fn credentials(provider: Provider) -> std::result::Result<Option<Credentials>, ProviderFailure> {
+    let Some(key) = env::var(provider.key_name())
+        .ok()
+        .filter(|key| !key.is_empty())
+    else {
+        return Ok(None);
+    };
+    if !valid_api_key(&key) {
+        return Err(ProviderFailure::new(
+            FailureKind::Authentication,
+            format!("{} is invalid", provider.key_name()),
+        ));
+    }
+    let account_id = if provider == Provider::Cloudflare {
+        let value = env::var("RADY_CLOUDFLARE_ACCOUNT_ID").unwrap_or_default();
+        if !valid_account_id(&value) {
+            return Err(ProviderFailure::new(
+                FailureKind::Authentication,
+                "RADY_CLOUDFLARE_ACCOUNT_ID is missing or invalid",
+            ));
+        }
+        Some(value)
+    } else {
+        None
+    };
+    Ok(Some(Credentials { key, account_id }))
+}
+
+fn known_provider_models(provider: Provider, tier: Tier) -> Vec<HostedModel> {
+    models_from_ids(
+        provider,
+        default_models(provider, tier)
+            .iter()
+            .map(|id| (*id).to_owned()),
+    )
+}
+
+fn catalog_provider_models(
+    provider: Provider,
+    tier: Tier,
+    credentials: &Credentials,
+) -> std::result::Result<Vec<HostedModel>, ProviderFailure> {
+    let discovered = match cached_catalog(provider) {
+        Some(models) => models,
+        None => {
+            let models = discover_models(provider, credentials)?;
+            if !models.is_empty() {
+                store_catalog(provider, &models);
+            }
+            models
+        }
+    };
+    Ok(models_from_ids(
+        provider,
+        rank_catalog_models(discovered, tier),
+    ))
+}
+
+fn models_from_ids(provider: Provider, ids: impl IntoIterator<Item = String>) -> Vec<HostedModel> {
+    let rejected = with_router(|router| {
+        router
+            .providers
+            .entry(provider)
+            .or_default()
+            .rejected_models
+            .clone()
+    });
+    let mut seen = BTreeSet::new();
+    ids.into_iter()
+        .filter(|id| compatible_model_id(id) && !rejected.contains(id) && seen.insert(id.clone()))
+        .take(MAX_MODELS_PER_PROVIDER)
+        .map(|id| HostedModel { provider, id })
+        .collect()
+}
+
+fn discover_models(
+    provider: Provider,
+    credentials: &Credentials,
+) -> std::result::Result<Vec<String>, ProviderFailure> {
+    match provider {
+        Provider::Gemini => gemini::catalog(credentials),
+        Provider::Groq | Provider::Cerebras => openai::catalog(provider, credentials),
+        Provider::Cloudflare | Provider::OpenRouter => Ok(Vec::new()),
+        Provider::Xai => xai::catalog(credentials),
+    }
+}
+
+fn default_models(provider: Provider, tier: Tier) -> &'static [&'static str] {
+    match (provider, tier) {
+        (Provider::Gemini, Tier::Fast) => &["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
+        (Provider::Gemini, Tier::Balanced | Tier::Deep) => {
+            &["gemini-3.8-flash", "gemini-3.5-flash"]
+        }
+        (Provider::Groq, Tier::Fast) => &["qwen/qwen3.8-27b", "openai/gpt-oss-20b"],
+        (Provider::Groq, Tier::Balanced | Tier::Deep) => {
+            &["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+        }
+        (Provider::Cloudflare, Tier::Fast) => &["@cf/openai/gpt-oss-20b"],
+        (Provider::Cloudflare, Tier::Balanced | Tier::Deep) => {
+            &["@cf/openai/gpt-oss-120b", "@cf/openai/gpt-oss-20b"]
+        }
+        (Provider::Cerebras, _) => &["gpt-oss-120b", "llama3.1-8b"],
+        (Provider::OpenRouter, _) => &["openrouter/free"],
+        (Provider::Xai, _) => &["grok-4.7"],
+    }
+}
+
+fn provider_order(tier: Tier, permitted: &[Provider]) -> Vec<Provider> {
+    let now = Instant::now();
+    let mut providers = with_router(|router| {
+        permitted
+            .iter()
+            .copied()
+            .filter(|provider| {
+                let state = router.providers.entry(*provider).or_default();
+                !state.disabled && state.cooldown_until.is_none_or(|until| until <= now)
+            })
+            .collect::<Vec<_>>()
+    });
+    let primary_count = providers
+        .iter()
+        .position(|provider| matches!(provider, Provider::OpenRouter | Provider::Xai))
+        .unwrap_or(providers.len());
+    if tier != Tier::Deep && primary_count > 1 {
+        let offset = with_router(|router| {
+            let offset = router.rotation % primary_count;
+            router.rotation = router.rotation.wrapping_add(1);
+            offset
+        });
+        providers[..primary_count].rotate_left(offset);
+    }
+    providers
+}
+
+fn cached_catalog(provider: Provider) -> Option<Vec<String>> {
+    let now = Instant::now();
+    with_router(|router| {
+        let state = router.providers.entry(provider).or_default();
+        state
+            .catalog_until
+            .filter(|until| *until > now)
+            .map(|_| state.catalog.clone())
+    })
+}
+
+fn store_catalog(provider: Provider, models: &[String]) {
+    with_router(|router| {
+        let state = router.providers.entry(provider).or_default();
+        state.catalog = models.iter().take(MAX_CATALOG_MODELS).cloned().collect();
+        state.catalog_until = Some(Instant::now() + CATALOG_TTL);
+    });
+}
+
+fn record_success(provider: Provider) {
+    with_router(|router| {
+        let state = router.providers.entry(provider).or_default();
+        state.cooldown_until = None;
+    });
+}
+
+fn record_failure(provider: Provider, failure: &ProviderFailure) {
+    with_router(|router| {
+        let state = router.providers.entry(provider).or_default();
+        match failure.kind {
+            FailureKind::Authentication => state.disabled = true,
+            FailureKind::Payment => {
+                state.cooldown_until = Some(Instant::now() + Duration::from_secs(24 * 60 * 60));
+            }
+            FailureKind::RateLimit => {
+                let delay = failure
+                    .retry_after
+                    .unwrap_or(Duration::from_secs(60))
+                    .clamp(Duration::from_secs(1), Duration::from_secs(6 * 60 * 60));
+                state.cooldown_until = Some(Instant::now() + delay);
+            }
+            FailureKind::Transient => {
+                state.cooldown_until = Some(Instant::now() + Duration::from_secs(30));
+            }
+            FailureKind::Model | FailureKind::InvalidResponse => {}
+        }
+    });
+}
+
+fn record_rejected_model(provider: Provider, model: &str) {
+    with_router(|router| {
+        let rejected = &mut router
+            .providers
+            .entry(provider)
+            .or_default()
+            .rejected_models;
+        if rejected.len() >= MAX_REJECTED_MODELS && !rejected.contains(model) {
+            rejected.pop_first();
+        }
+        rejected.insert(model.to_owned());
+    });
+}
+
+fn with_router<T>(operation: impl FnOnce(&mut RouterState) -> T) -> T {
+    let mut router = ROUTER
+        .get_or_init(|| Mutex::new(RouterState::default()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    operation(&mut router)
+}
+
+fn push_failure(failures: &mut Vec<String>, label: &str, failure: &ProviderFailure) {
+    if failures.len() < MAX_FAILURES {
+        failures.push(format!("{label}: {failure}"));
+    }
 }
 
 pub(super) fn answer_schema() -> Value {
@@ -191,7 +603,7 @@ pub(super) fn answer_schema() -> Value {
                 "items": {"type": "string", "minLength": 1, "maxLength": 240}
             }
         },
-        "required": ["answer"]
+        "required": ["answer", "follow_ups"]
     })
 }
 
@@ -203,91 +615,8 @@ pub(super) fn bool_environment(name: &str) -> Option<bool> {
     }
 }
 
-fn external_provider_permitted(repository_private: Option<bool>, private_opt_in: bool) -> bool {
-    repository_private == Some(false) || private_opt_in
-}
-
-fn hosted_models(
-    tier: Tier,
-    gemini_allowed: bool,
-    cerebras_allowed: bool,
-    xai_allowed: bool,
-) -> Vec<HostedModel> {
-    let mut models = Vec::with_capacity(4 + MAX_CATALOG_MODELS * 3);
-    if gemini_allowed {
-        models.push(HostedModel::Gemini(
-            match tier {
-                Tier::Fast => "gemini-3.5-flash-lite",
-                Tier::Balanced | Tier::Deep => "gemini-3.8-flash",
-            }
-            .to_owned(),
-        ));
-    }
-    if cerebras_allowed {
-        if tier != Tier::Fast {
-            models.push(HostedModel::Cerebras("qwen-3.8-27b".to_owned()));
-        }
-        models.push(HostedModel::Cerebras("gpt-oss-120b".to_owned()));
-    }
-    if xai_allowed {
-        models.push(HostedModel::Xai("grok-4.7".to_owned()));
-    }
-    models
-}
-
-fn discovered_models(
-    tier: Tier,
-    models: &mut Vec<HostedModel>,
-    gemini_allowed: bool,
-    cerebras_allowed: bool,
-    xai_allowed: bool,
-) {
-    let fallback = std::mem::take(models);
-    let mut known = BTreeSet::new();
-    for (provider, permitted, key_name, discover) in [
-        (
-            "gemini",
-            gemini_allowed,
-            "RADY_GEMINI_API_KEY",
-            gemini_catalog as fn(&str) -> Result<Vec<String>>,
-        ),
-        (
-            "cerebras",
-            cerebras_allowed,
-            "RADY_CEREBRAS_API_KEY",
-            cerebras_catalog,
-        ),
-        ("xai", xai_allowed, "RADY_XAI_API_KEY", xai_catalog),
-    ] {
-        let discovered = permitted
-            .then(|| env::var(key_name).ok().filter(|key| valid_api_key(key)))
-            .flatten()
-            .and_then(|key| discover(&key).ok());
-        if let Some(ids) = discovered {
-            for id in rank_catalog_models(ids, tier) {
-                if known.insert((provider, id.clone())) {
-                    models.push(match provider {
-                        "gemini" => HostedModel::Gemini(id),
-                        "cerebras" => HostedModel::Cerebras(id),
-                        "xai" => HostedModel::Xai(id),
-                        _ => unreachable!("static provider list"),
-                    });
-                }
-            }
-        }
-        for model in fallback
-            .iter()
-            .filter(|model| model.provider() == provider)
-            .cloned()
-        {
-            let id = match &model {
-                HostedModel::Gemini(id) | HostedModel::Cerebras(id) | HostedModel::Xai(id) => id,
-            };
-            if known.insert((provider, id.clone())) {
-                models.push(model);
-            }
-        }
-    }
+fn provider_permitted(provider: Provider, repository_private: Option<bool>) -> bool {
+    repository_private == Some(false) || bool_environment(provider.private_opt_in()) == Some(true)
 }
 
 fn rank_catalog_models(ids: Vec<String>, tier: Tier) -> Vec<String> {
@@ -304,13 +633,20 @@ fn rank_catalog_models(ids: Vec<String>, tier: Tier) -> Vec<String> {
 
 fn model_rank(id: &str, tier: Tier) -> u8 {
     let id = id.to_ascii_lowercase();
-    let flash = id.contains("flash") || id.contains("mini") || id.contains("small");
-    let reasoning = id.contains("reason") || id.contains("thinking") || id.contains("oss-120b");
+    let small = id.contains("flash")
+        || id.contains("lite")
+        || id.contains("mini")
+        || id.contains("20b")
+        || id.contains("8b");
+    let reasoning = id.contains("reason")
+        || id.contains("thinking")
+        || id.contains("120b")
+        || id.contains("qwen3");
     match tier {
-        Tier::Fast if flash => 0,
+        Tier::Fast if small => 0,
         Tier::Fast => 1,
-        Tier::Balanced if flash => 1,
-        Tier::Balanced => 0,
+        Tier::Balanced if reasoning => 0,
+        Tier::Balanced => 1,
         Tier::Deep if reasoning => 0,
         Tier::Deep => 1,
     }
@@ -318,7 +654,7 @@ fn model_rank(id: &str, tier: Tier) -> u8 {
 
 fn compatible_model_id(id: &str) -> bool {
     let lowered = id.to_ascii_lowercase();
-    valid_model_id(id)
+    valid_model_identifier(id)
         && [
             "gemini", "gemma", "gpt", "qwen", "llama", "mistral", "deepseek", "grok",
         ]
@@ -329,328 +665,23 @@ fn compatible_model_id(id: &str) -> bool {
             .any(|unsupported| lowered.contains(unsupported))
 }
 
-pub(super) fn valid_model_id(id: &str) -> bool {
+fn valid_model_identifier(id: &str) -> bool {
     !id.is_empty()
-        && id.len() <= 128
-        && id
+        && id.len() <= 160
+        && !id.contains("://")
+        && !id.contains("..")
+        && !id.starts_with('/')
+        && id.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':' | b'@')
+        })
+}
+
+pub(super) fn valid_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 100
+        && value
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-}
-
-fn provider_prompt(evidence: &str) -> Result<String> {
-    let prompt = format!("Evidence JSON:\n{evidence}");
-    if prompt.len() > MAX_EVIDENCE_BYTES + 4_000 {
-        bail!("mention prompt is too large");
-    }
-    Ok(prompt)
-}
-
-fn gemini_catalog(key: &str) -> Result<Vec<String>> {
-    let output = provider_get(
-        "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
-        "x-goog-api-key",
-        key,
-    )?;
-    Ok(serde_json::from_str::<Value>(&output)
-        .ok()
-        .and_then(|value| value["models"].as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|model| {
-            model["supportedGenerationMethods"]
-                .as_array()
-                .is_some_and(|methods| {
-                    methods
-                        .iter()
-                        .any(|method| method.as_str() == Some("generateContent"))
-                })
-        })
-        .filter_map(|model| {
-            model["name"]
-                .as_str()?
-                .strip_prefix("models/")
-                .map(str::to_owned)
-        })
-        .collect())
-}
-
-fn cerebras_catalog(key: &str) -> Result<Vec<String>> {
-    let output = provider_get(
-        "https://api.cerebras.ai/v1/models",
-        "Authorization",
-        &format!("Bearer {key}"),
-    )?;
-    Ok(serde_json::from_str::<Value>(&output)
-        .ok()
-        .and_then(|value| value["data"].as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|model| model["id"].as_str().map(str::to_owned))
-        .collect())
-}
-
-fn xai_catalog(key: &str) -> Result<Vec<String>> {
-    let output = provider_get(
-        "https://api.x.ai/v1/models",
-        "Authorization",
-        &format!("Bearer {key}"),
-    )?;
-    Ok(serde_json::from_str::<Value>(&output)
-        .ok()
-        .and_then(|value| value["data"].as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|model| model["id"].as_str().map(str::to_owned))
-        .collect())
-}
-
-fn gemini_answer(
-    prompt: &str,
-    model: &str,
-    key: &str,
-    instructions: &str,
-    schema: &Value,
-) -> Result<Value> {
-    let body = gemini_request(prompt, instructions, schema);
-    let output = provider_request(
-        &format!("https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"),
-        "x-goog-api-key",
-        key,
-        &body,
-    )?;
-    let text = serde_json::from_str::<Value>(&output)
-        .ok()
-        .and_then(|value| {
-            value["candidates"]
-                .as_array()?
-                .first()?
-                .get("content")?
-                .get("parts")?
-                .as_array()?
-                .first()?
-                .get("text")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .ok_or_else(|| anyhow!("Gemini returned an invalid response"))?;
-    strict_json_response(&text)
-}
-
-fn gemini_request(prompt: &str, instructions: &str, schema: &Value) -> Value {
-    json!({
-        "systemInstruction": {"parts": [{"text": instructions}]},
-        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "maxOutputTokens": 1_600,
-            "responseMimeType": "application/json",
-            "responseJsonSchema": schema
-        },
-    })
-}
-
-fn cerebras_answer(
-    prompt: &str,
-    model: &str,
-    key: &str,
-    instructions: &str,
-    schema: &Value,
-) -> Result<Value> {
-    let body = json!({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": prompt},
-        ],
-        "max_completion_tokens": 1_600,
-        "response_format": {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "rady_answer",
-                "strict": true,
-                "schema": schema
-            }
-        },
-    });
-    let output = provider_request(
-        "https://api.cerebras.ai/v1/chat/completions",
-        "Authorization",
-        &format!("Bearer {key}"),
-        &body,
-    )?;
-    let text = serde_json::from_str::<Value>(&output)
-        .ok()
-        .and_then(|value| {
-            value["choices"]
-                .as_array()?
-                .first()?
-                .get("message")?
-                .get("content")?
-                .as_str()
-                .map(str::to_owned)
-        })
-        .ok_or_else(|| anyhow!("Cerebras returned an invalid response"))?;
-    strict_json_response(&text)
-}
-
-fn xai_answer(
-    prompt: &str,
-    model: &str,
-    key: &str,
-    instructions: &str,
-    schema: &Value,
-) -> Result<Value> {
-    let body = json!({
-        "model": model,
-        "input": [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": prompt},
-        ],
-        "max_output_tokens": 1_600,
-        "reasoning": {"effort": "low"},
-        "store": false,
-        "text": {
-            "format": {
-                "type": "json_schema",
-                "name": "rady_answer",
-                "strict": true,
-                "schema": schema
-            }
-        },
-    });
-    let output = provider_request(
-        "https://api.x.ai/v1/responses",
-        "Authorization",
-        &format!("Bearer {key}"),
-        &body,
-    )?;
-    let text =
-        xai_response_text(&output).ok_or_else(|| anyhow!("xAI returned an invalid response"))?;
-    strict_json_response(&text)
-}
-
-fn xai_response_text(output: &str) -> Option<String> {
-    let value = serde_json::from_str::<Value>(output).ok()?;
-    value["output"]
-        .as_array()?
-        .iter()
-        .find(|item| item["type"] == "message")?
-        .get("content")?
-        .as_array()?
-        .iter()
-        .find(|content| content["type"] == "output_text")?
-        .get("text")?
-        .as_str()
-        .map(str::to_owned)
-}
-
-fn provider_request(url: &str, header_name: &str, secret: &str, body: &Value) -> Result<String> {
-    provider_call(
-        url,
-        header_name,
-        secret,
-        "POST",
-        Some(serde_json::to_vec(body)?),
-    )
-}
-
-fn provider_get(url: &str, header_name: &str, secret: &str) -> Result<String> {
-    provider_call(url, header_name, secret, "GET", None)
-}
-
-fn provider_call(
-    url: &str,
-    header_name: &str,
-    secret: &str,
-    method: &str,
-    body: Option<Vec<u8>>,
-) -> Result<String> {
-    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to answer mentions"))?;
-    let directory = tempdir()?;
-    let config = directory.path().join("curl.conf");
-    std::fs::write(
-        &config,
-        format!("header = \"{}: {}\"\n", header_name, curl_escape(secret)),
-    )?;
-    let arguments = provider_arguments(method, &config, url, body.is_some());
-    let output = agent::execute(
-        curl.as_os_str(),
-        &arguments,
-        directory.path(),
-        body.as_deref().unwrap_or_default(),
-        PROVIDER_TIMEOUT + Duration::from_secs(5),
-        &BTreeMap::new(),
-        false,
-        None,
-    )?;
-    provider_response(output.code, &output.stdout)
-}
-
-fn provider_arguments(method: &str, config: &Path, url: &str, has_body: bool) -> Vec<String> {
-    let mut arguments = vec![
-        "--disable".to_owned(),
-        "--silent".to_owned(),
-        "--show-error".to_owned(),
-        "--fail-with-body".to_owned(),
-        "--proto".to_owned(),
-        "=https".to_owned(),
-        "--tlsv1.2".to_owned(),
-        "--no-location".to_owned(),
-        "--request".to_owned(),
-        method.to_owned(),
-        "--config".to_owned(),
-        config.to_string_lossy().into_owned(),
-    ];
-    if has_body {
-        arguments.extend([
-            "--header".to_owned(),
-            "Content-Type: application/json".to_owned(),
-            "--data-binary".to_owned(),
-            "@-".to_owned(),
-        ]);
-    }
-    arguments.extend([
-        "--connect-timeout".to_owned(),
-        "5".to_owned(),
-        "--max-time".to_owned(),
-        PROVIDER_TIMEOUT.as_secs().to_string(),
-        "--max-filesize".to_owned(),
-        MAX_PROVIDER_RESPONSE_BYTES.to_string(),
-        "--write-out".to_owned(),
-        format!("{HTTP_STATUS_MARKER}%{{http_code}}"),
-        url.to_owned(),
-    ]);
-    arguments
-}
-
-fn provider_response(code: i32, output: &str) -> Result<String> {
-    let (body, status) = output
-        .rsplit_once(HTTP_STATUS_MARKER)
-        .ok_or_else(|| anyhow!("request returned no HTTP status"))?;
-    let status = status
-        .parse::<u16>()
-        .map_err(|_| anyhow!("request returned an invalid HTTP status"))?;
-    if code != 0 {
-        match code {
-            6 => bail!("request could not resolve the provider"),
-            7 => bail!("request could not connect to the provider"),
-            22 if status == 402 => bail!("provider reported payment required (HTTP 402)"),
-            22 if status != 0 => bail!("request was rejected (HTTP {status})"),
-            28 => bail!("request timed out"),
-            63 => bail!("response exceeded {MAX_PROVIDER_RESPONSE_BYTES} bytes"),
-            _ => bail!("request failed (transport {code})"),
-        }
-    }
-    if !(200..300).contains(&status) {
-        bail!("request returned HTTP {status}");
-    }
-    if body.len() > MAX_PROVIDER_RESPONSE_BYTES {
-        bail!("response exceeded {MAX_PROVIDER_RESPONSE_BYTES} bytes");
-    }
-    Ok(body.to_owned())
-}
-
-fn curl_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
 fn valid_api_key(value: &str) -> bool {
@@ -661,19 +692,34 @@ fn valid_api_key(value: &str) -> bool {
             .all(|byte| byte.is_ascii_graphic() && byte != b'"' && byte != b'\\')
 }
 
-#[cfg(test)]
-fn answer_from_json(value: &str) -> Result<String> {
-    answer_from_value(&strict_json_response(value)?)
+fn valid_account_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-fn strict_json_response(value: &str) -> Result<Value> {
-    if value.len() > MAX_PROVIDER_RESPONSE_BYTES {
-        bail!("hosted model returned an oversized response");
+fn provider_prompt(evidence: &str) -> Result<String> {
+    let prompt = format!("Evidence JSON:\n{evidence}");
+    if prompt.len() > MAX_EVIDENCE_BYTES + 4_000 {
+        bail!("mention prompt is too large");
+    }
+    Ok(prompt)
+}
+
+fn strict_json_response(value: &str) -> std::result::Result<Value, ProviderFailure> {
+    if value.len() > http::MAX_RESPONSE_BYTES {
+        return Err(ProviderFailure::new(
+            FailureKind::InvalidResponse,
+            "returned an oversized response",
+        ));
     }
     serde_json::from_str(value)
         .ok()
         .filter(Value::is_object)
-        .ok_or_else(|| anyhow!("hosted model returned invalid JSON"))
+        .ok_or_else(|| ProviderFailure::new(FailureKind::InvalidResponse, "returned invalid JSON"))
+}
+
+#[cfg(test)]
+fn answer_from_json(value: &str) -> Result<String> {
+    answer_from_value(&strict_json_response(value).map_err(anyhow::Error::new)?)
 }
 
 pub(super) fn answer_from_value(value: &Value) -> Result<String> {
@@ -722,88 +768,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn routes_hosted_models_and_validates_strict_answers() {
-        for (tier, gemini_allowed, cerebras_allowed, xai_allowed, expected) in [
+    fn routes_supported_providers_and_validates_identifiers() {
+        let cases = [
             (
-                Tier::Fast,
-                true,
-                true,
-                true,
-                vec![
-                    HostedModel::Gemini("gemini-3.5-flash-lite".to_owned()),
-                    HostedModel::Cerebras("gpt-oss-120b".to_owned()),
-                    HostedModel::Xai("grok-4.7".to_owned()),
-                ],
-            ),
-            (
-                Tier::Balanced,
-                true,
-                true,
-                false,
-                vec![
-                    HostedModel::Gemini("gemini-3.8-flash".to_owned()),
-                    HostedModel::Cerebras("qwen-3.8-27b".to_owned()),
-                    HostedModel::Cerebras("gpt-oss-120b".to_owned()),
-                ],
-            ),
-            (
+                Provider::Groq,
                 Tier::Deep,
-                false,
-                true,
-                true,
-                vec![
-                    HostedModel::Cerebras("qwen-3.8-27b".to_owned()),
-                    HostedModel::Cerebras("gpt-oss-120b".to_owned()),
-                    HostedModel::Xai("grok-4.7".to_owned()),
-                ],
+                &["openai/gpt-oss-120b", "qwen/qwen3.8-27b"][..],
             ),
-        ] {
-            assert_eq!(
-                hosted_models(tier, gemini_allowed, cerebras_allowed, xai_allowed),
-                expected
-            );
-        }
-        for (private, opted_in, allowed) in [
-            (Some(false), false, true),
-            (Some(true), false, false),
-            (None, false, false),
-            (Some(true), true, true),
-        ] {
-            assert_eq!(external_provider_permitted(private, opted_in), allowed);
-        }
-        assert_eq!(answer_from_json(r#"{"answer":"ready"}"#).unwrap(), "ready");
-        let schema = answer_schema();
-        let gemini = gemini_request("evidence", "instructions", &schema);
-        assert_eq!(
-            gemini["generationConfig"]["responseJsonSchema"]["type"],
-            "object"
-        );
-        assert_eq!(
-            xai_response_text(
-                r#"{"output":[{"type":"message","content":[{"type":"output_text","text":"{\"answer\":\"ready\"}"}]}]}"#
-            )
-            .as_deref(),
-            Some(r#"{"answer":"ready"}"#)
-        );
-        for (code, output, expected) in [
-            (0, "{\"answer\":\"ready\"}\nRADY_HTTP_STATUS:200", None),
             (
-                22,
-                "provider body must stay hidden\nRADY_HTTP_STATUS:402",
-                Some("provider reported payment required (HTTP 402)"),
+                Provider::Cloudflare,
+                Tier::Fast,
+                &["@cf/openai/gpt-oss-20b"][..],
             ),
-            (28, "\nRADY_HTTP_STATUS:000", Some("request timed out")),
-        ] {
-            let result = provider_response(code, output);
-            match expected {
-                Some(message) => assert_eq!(result.unwrap_err().to_string(), message),
-                None => assert_eq!(result.unwrap(), r#"{"answer":"ready"}"#),
-            }
+            (
+                Provider::OpenRouter,
+                Tier::Balanced,
+                &["openrouter/free"][..],
+            ),
+            (
+                Provider::Cerebras,
+                Tier::Deep,
+                &["gpt-oss-120b", "llama3.1-8b"][..],
+            ),
+        ];
+        for (provider, tier, expected) in cases {
+            assert_eq!(default_models(provider, tier), expected);
         }
+        assert!(valid_model_identifier("@cf/openai/gpt-oss-120b"));
+        assert!(valid_model_identifier("meta-llama/llama-4:free"));
+        assert!(!valid_model_identifier("https://provider.invalid/model"));
+        assert!(valid_slug("radyybot"));
+        assert!(!valid_slug("radyybot/model"));
     }
 
     #[test]
-    fn catalog_ranking_rejects_non_generation_models_and_stays_bounded() {
+    fn ranks_models_and_keeps_answers_strict() {
         let ids = ["gemini-pro", "gemini-flash", "embedding-001"]
             .into_iter()
             .map(str::to_owned)
@@ -812,25 +811,8 @@ mod tests {
             rank_catalog_models(ids, Tier::Fast),
             vec!["gemini-flash".to_owned(), "gemini-pro".to_owned()]
         );
-        assert!(!valid_model_id("gemini/unsafe"));
-        for (method, body, expected_body) in [("GET", false, false), ("POST", true, true)] {
-            let arguments = provider_arguments(
-                method,
-                Path::new("/tmp/rady-curl.conf"),
-                "https://provider.example/v1/models",
-                body,
-            );
-            assert!(
-                arguments
-                    .windows(2)
-                    .any(|pair| pair == ["--proto", "=https"])
-            );
-            assert!(arguments.iter().any(|argument| argument == "--tlsv1.2"));
-            assert!(arguments.iter().any(|argument| argument == "--no-location"));
-            assert_eq!(
-                arguments.iter().any(|argument| argument == "--data-binary"),
-                expected_body
-            );
-        }
+        assert_eq!(answer_from_json(r#"{"answer":"ready"}"#).unwrap(), "ready");
+        let error = anyhow!(HostedUnavailable("cooling down".to_owned()));
+        assert!(is_hosted_unavailable(&error));
     }
 }
