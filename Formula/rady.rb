@@ -20,6 +20,6 @@ class Rady < Formula
   test do
     ENV["RADY_RUNS_DIR"] = (testpath/"runs").to_s
     assert_match '"runs": []', shell_output("#{bin}/rady --output json runs")
-    assert_match "Usage: rady dependasolve", shell_output("#{bin}/dependasolver --help")
+    assert_match "Usage: rady dependasolve", shell_output("#{bin}/rady dependasolve --help")
   end
 end
