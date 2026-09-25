@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  orchestrate:
+  mentions:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
       - name: Build trusted Rady
         run: cargo build --release --locked --bin rady
-      - name: Process consented RadDuck work
+      - name: Answer consented RadDuck mentions
         env:
           RADY_APP_CLIENT_ID: ${{ vars.RADY_APP_CLIENT_ID }}
           RADY_APP_PRIVATE_KEY: ${{ secrets.RADY_APP_PRIVATE_KEY }}
@@ -44,4 +44,83 @@ jobs:
           RADY_MODEL: ${{ vars.RADY_MODEL || '' }}
           RADY_MODEL_CHOICES: ${{ vars.RADY_MODEL_CHOICES || '' }}
           RADY_HARNESS: ${{ vars.RADY_HARNESS || 'codex' }}
-        run: target/release/rady agent serve --once
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'GitHub run number is invalid' >&2
+            exit 1
+          }
+          export RADY_INSTALLATION_SEED="$GITHUB_RUN_NUMBER"
+          target/release/rady agent serve --once
+
+  targets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+      has-targets: ${{ steps.targets.outputs.has-targets }}
+    steps:
+      - name: Check out central Rady service
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build trusted Rady
+        run: cargo build --release --locked --bin rady
+      - name: Find consented pull requests
+        id: targets
+        env:
+          RADY_APP_CLIENT_ID: ${{ vars.RADY_APP_CLIENT_ID }}
+          RADY_APP_PRIVATE_KEY: ${{ secrets.RADY_APP_PRIVATE_KEY }}
+          RADY_APP_SLUG: ${{ vars.RADY_APP_SLUG }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
+            echo 'GitHub run number is invalid' >&2
+            exit 1
+          }
+          export RADY_INSTALLATION_SEED="$GITHUB_RUN_NUMBER"
+          export RADY_TARGET_SEED="$GITHUB_RUN_NUMBER"
+          matrix=$(target/release/rady agent targets --max-reviews 4)
+          jq -e '.include | type == "array" and length <= 4' <<<"$matrix" > /dev/null
+          echo "matrix=$(jq -c . <<<"$matrix")" >> "$GITHUB_OUTPUT"
+          if [[ $(jq '.include | length' <<<"$matrix") == 0 ]]; then
+            echo 'has-targets=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'has-targets=true' >> "$GITHUB_OUTPUT"
+          fi
+
+  review:
+    needs: targets
+    if: needs.targets.outputs.has-targets == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.targets.outputs.matrix).include }}
+    uses: ./.github/workflows/solve.yml
+    with:
+      solver-ref: ${{ matrix.solver_ref }}
+      app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
+      repo: ${{ matrix.repo }}
+      repo-owner: ${{ matrix.owner }}
+      repo-name: ${{ matrix.name }}
+      repository-private: ${{ matrix.private }}
+      required-checks: ${{ toJSON(matrix.checks) }}
+      model: ${{ vars.RADY_MODEL || '' }}
+      model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}
+      cloudflare-account-id: ${{ vars.RADY_CLOUDFLARE_ACCOUNT_ID || '' }}
+      gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}
+      cerebras-private-ok: ${{ vars.RADY_CEREBRAS_PRIVATE_OK == 'true' }}
+      xai-private-ok: ${{ vars.RADY_XAI_PRIVATE_OK == 'true' }}
+      groq-private-ok: ${{ vars.RADY_GROQ_PRIVATE_OK == 'true' }}
+      cloudflare-private-ok: ${{ vars.RADY_CLOUDFLARE_PRIVATE_OK == 'true' }}
+      openrouter-private-ok: ${{ vars.RADY_OPENROUTER_PRIVATE_OK == 'true' }}
+      harness: ${{ vars.RADY_HARNESS || 'codex' }}
+      pr-number: ${{ matrix.number }}
+    secrets:
+      app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}
+      gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}
+      cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}
+      xai-api-key: ${{ secrets.RADY_XAI_API_KEY }}
+      groq-api-key: ${{ secrets.RADY_GROQ_API_KEY }}
+      cloudflare-api-token: ${{ secrets.RADY_CLOUDFLARE_API_TOKEN }}
+      openrouter-api-key: ${{ secrets.RADY_OPENROUTER_API_KEY }}

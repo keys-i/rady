@@ -1,35 +1,34 @@
-use std::env;
-use std::time::Duration;
-
 use anyhow::anyhow;
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::Result;
 use crate::github::{self, GitHub};
-use crate::reviews;
 use crate::setup;
 
-use super::{ServeArgs, ServiceCycleOutcome, owner_matches, record_sweep_failure};
+use super::{ServeArgs, owner_matches, record_sweep_failure};
 
-pub(super) fn service_reviews(
-    arguments: &ServeArgs,
-    token: &str,
-    max_reviews: usize,
-) -> Result<ServiceCycleOutcome> {
+#[derive(Clone, Debug, Serialize)]
+pub(super) struct CentralTarget {
+    pub(super) repo: String,
+    pub(super) owner: String,
+    pub(super) name: String,
+    pub(super) private: bool,
+    pub(super) number: u64,
+    pub(super) checks: Vec<String>,
+    pub(super) solver_ref: String,
+}
+
+pub(super) fn central_targets<F>(arguments: &ServeArgs, token: &str, select: &mut F) -> Result<()>
+where
+    F: FnMut(CentralTarget),
+{
     let repositories =
         github::authenticated_pages("installation/repositories", "repositories", token)?;
-    let model = env::var("RADY_MODEL")
-        .ok()
-        .filter(|value| !value.is_empty());
-    let slug = env::var("RADY_APP_SLUG")
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "radduck".to_owned());
-    let mut reviewed = 0;
     let mut failures = Vec::new();
     let mut repositories = repositories.iter().collect::<Vec<_>>();
     repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
-    'repositories: for repository in repositories {
+    for repository in repositories {
         if repository["archived"].as_bool() == Some(true)
             || repository["disabled"].as_bool() == Some(true)
         {
@@ -66,6 +65,25 @@ pub(super) fn service_reviews(
         }) else {
             continue;
         };
+        let solver_ref = match solver_ref(&configuration) {
+            Some(Ok(source)) => source.joined(),
+            Some(Err(error)) => {
+                record_sweep_failure(
+                    &mut failures,
+                    name,
+                    &anyhow!(".github/rady.json has an invalid trusted solver source: {error}"),
+                );
+                continue;
+            }
+            None => {
+                record_sweep_failure(
+                    &mut failures,
+                    name,
+                    &anyhow!(".github/rady.json has no trusted solver source"),
+                );
+                continue;
+            }
+        };
         if checks.is_empty()
             || checks.len() > 32
             || checks.iter().any(|check| {
@@ -87,10 +105,8 @@ pub(super) fn service_reviews(
             }
         };
         for pull in pulls {
-            if reviewed >= max_reviews {
-                break 'repositories;
-            }
-            let eligible_author = pull["user"]["login"] == "dependabot[bot]"
+            let dependabot = pull["user"]["login"] == "dependabot[bot]";
+            let eligible_author = dependabot
                 || matches!(
                     pull["author_association"].as_str(),
                     Some("OWNER" | "MEMBER" | "COLLABORATOR")
@@ -102,9 +118,11 @@ pub(super) fn service_reviews(
             {
                 continue;
             }
-            let (Some(number), Some(head)) =
-                (pull["number"].as_u64(), pull["head"]["sha"].as_str())
-            else {
+            let (Some(number), Some(owner), Some(repository_name)) = (
+                pull["number"].as_u64(),
+                repository["owner"]["login"].as_str(),
+                repository["name"].as_str(),
+            ) else {
                 record_sweep_failure(
                     &mut failures,
                     name,
@@ -112,32 +130,29 @@ pub(super) fn service_reviews(
                 );
                 continue;
             };
-            match reviews::review_pr(
-                &github,
-                number,
-                &checks,
-                model.as_deref(),
-                &slug,
-                arguments.harness,
+            let Some(private) = private else {
+                record_sweep_failure(
+                    &mut failures,
+                    name,
+                    &anyhow!("GitHub returned an invalid repository visibility"),
+                );
+                continue;
+            };
+            select(CentralTarget {
+                repo: name.to_owned(),
+                owner: owner.to_owned(),
+                name: repository_name.to_owned(),
                 private,
-                "",
-                "",
-                "",
-                head,
-                Duration::ZERO,
-            ) {
-                Ok(outcome) => reviewed += usize::from(outcome.published),
-                Err(error) if crate::mentions::is_hosted_unavailable(&error) => {
-                    eprintln!(
-                        "{name}: model providers are cooling down; Rady will retry pull requests next pass"
-                    );
-                    continue 'repositories;
-                }
-                Err(error) => record_sweep_failure(&mut failures, name, &error),
-            }
+                number,
+                checks: checks.clone(),
+                solver_ref: solver_ref.clone(),
+            });
         }
     }
-    Ok(ServiceCycleOutcome { reviewed, failures })
+    for failure in failures {
+        eprintln!("Target skipped: {failure}");
+    }
+    Ok(())
 }
 
 fn service_configuration(github: &GitHub) -> Result<Option<Value>> {
@@ -151,5 +166,34 @@ fn service_configuration(github: &GitHub) -> Result<Option<Value>> {
         Ok(Some(configuration))
     } else {
         Ok(None)
+    }
+}
+
+fn solver_ref(configuration: &Value) -> Option<Result<setup::SourceRef>> {
+    configuration["source"]
+        .as_str()
+        .map(setup::SourceRef::parse)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::solver_ref;
+
+    #[test]
+    fn solver_source_is_an_explicit_trusted_commit() {
+        for (source, valid) in [
+            ("keys-i/rady@0123456789abcdef0123456789abcdef01234567", true),
+            ("keys-i/rady@main", false),
+            ("other/rady@0123456789abcdef0123456789abcdef01234567", false),
+        ] {
+            let configuration = json!({"source": source});
+            assert_eq!(
+                solver_ref(&configuration).is_some_and(|value| value.is_ok()),
+                valid
+            );
+        }
+        assert!(solver_ref(&json!({})).is_none());
     }
 }

@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
 
 use crate::Result;
-use crate::apps::{self, Identity};
+use crate::apps;
 use crate::github;
 
 mod consent;
@@ -117,8 +117,6 @@ pub fn install(
     source: &SourceRef,
     required: &[String],
     directory: &Path,
-    new_app: bool,
-    _identity: Identity,
     overwrite: bool,
     accept_terms: bool,
 ) -> Result<()> {
@@ -146,11 +144,6 @@ pub fn install(
         Some("User" | "Organization")
     ) {
         bail!("only personal and organisation repositories are supported");
-    }
-    if new_app {
-        bail!(
-            "--new-app is no longer available from a target repository; RadDuck is centrally hosted by {TRUSTED_SOLVER_REPOSITORY}"
-        );
     }
     let reuse_agreement = match existing.as_ref() {
         Some(configuration) => consent::verified_existing_configuration(repo, configuration)?,
@@ -369,8 +362,6 @@ pub fn run(
     source: &SourceRef,
     required: &[String],
     directory: &Path,
-    identity: Identity,
-    new_app: bool,
     overwrite: bool,
     apply: bool,
     accept_terms: bool,
@@ -394,23 +385,13 @@ pub fn run(
         "privacy": {"version": PRIVACY_VERSION, "url": PRIVACY_URL},
         "agreement_required": !accept_terms,
         "app_public": true,
-        "new_app": new_app,
         "app_permissions": apps::permissions(),
-        "identity": identity.slug(),
+        "app": apps::RADDUCK_SLUG,
         "overwrite": overwrite,
         "apply": apply,
     });
     if apply {
-        install(
-            repo,
-            source,
-            &required,
-            directory,
-            new_app,
-            identity,
-            overwrite,
-            accept_terms,
-        )?;
+        install(repo, source, &required, directory, overwrite, accept_terms)?;
     }
     Ok(preview)
 }
@@ -504,13 +485,7 @@ mod tests {
             "version: 2\n",
         )?;
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
-        let files = local_files(
-            temporary.path(),
-            &source,
-            &["check".to_owned()],
-            Identity::Rady,
-            true,
-        )?;
+        let files = local_files(temporary.path(), &source, &["check".to_owned()], true)?;
         assert_eq!(files.len(), 1);
         let configuration = files
             .iter()
@@ -539,6 +514,9 @@ mod tests {
             "RADY_CLOUDFLARE_API_TOKEN",
             "RADY_CLOUDFLARE_ACCOUNT_ID",
             "RADY_OPENROUTER_API_KEY",
+            "RADY_GEMINI_PRIVATE_OK",
+            "RADY_CEREBRAS_PRIVATE_OK",
+            "RADY_XAI_PRIVATE_OK",
             "RADY_GROQ_PRIVATE_OK",
             "RADY_CLOUDFLARE_PRIVATE_OK",
             "RADY_OPENROUTER_PRIVATE_OK",
@@ -551,6 +529,9 @@ mod tests {
             assert!(!orchestrator.contains(local));
         }
         assert!(orchestrator.contains("rady agent serve --once"));
+        assert!(orchestrator.contains("rady agent targets --max-reviews 4"));
+        assert!(orchestrator.contains("uses: ./.github/workflows/solve.yml"));
+        assert!(orchestrator.contains("max-parallel: 4"));
         assert!(!orchestrator.contains("--owner"));
         assert!(!orchestrator.contains("target/release/rady agent sweep"));
         assert!(!orchestrator.contains("target/release/rady agent respond"));

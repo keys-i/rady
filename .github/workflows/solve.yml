@@ -34,6 +34,28 @@ on:
         description: Comma-separated native models available to Rady's local selector
         type: string
         default: ''
+      cloudflare-account-id:
+        description: Central Cloudflare AI Gateway account identifier
+        type: string
+        default: ''
+      gemini-private-ok:
+        type: boolean
+        default: false
+      cerebras-private-ok:
+        type: boolean
+        default: false
+      xai-private-ok:
+        type: boolean
+        default: false
+      groq-private-ok:
+        type: boolean
+        default: false
+      cloudflare-private-ok:
+        type: boolean
+        default: false
+      openrouter-private-ok:
+        type: boolean
+        default: false
       harness:
         description: Installed, authenticated native agent CLI
         type: string
@@ -44,6 +66,18 @@ on:
     secrets:
       app-private-key:
         required: true
+      gemini-api-key:
+        required: false
+      cerebras-api-key:
+        required: false
+      xai-api-key:
+        required: false
+      groq-api-key:
+        required: false
+      cloudflare-api-token:
+        required: false
+      openrouter-api-key:
+        required: false
 
 permissions: {}
 
@@ -58,7 +92,6 @@ jobs:
     timeout-minutes: 3
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       allowed: ${{ steps.pull.outputs.allowed }}
       dependency: ${{ steps.pull.outputs.dependency }}
@@ -112,7 +145,6 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      pull-requests: write
     steps:
       - name: Create repository-scoped GitHub App token
         id: app-token
@@ -123,10 +155,9 @@ jobs:
           owner: ${{ inputs.repo-owner }}
           repositories: ${{ inputs.repo-name }}
           permission-administration: read
-          permission-contents: write
+          permission-contents: read
           permission-checks: read
           permission-statuses: read
-          permission-issues: write
           permission-pull-requests: write
       - name: Require a native public review harness
         if: inputs.repository-private != true
@@ -139,37 +170,6 @@ jobs:
             codex|claude) ;;
             *) echo 'Public repositories require the bounded Codex or Claude harness' >&2; exit 1 ;;
           esac
-      - name: Suspend stale Dependabot auto-merge
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ inputs.repo }}
-          PR_NUMBER: ${{ needs.preflight.outputs.number }}
-        run: |
-          set -euo pipefail
-          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
-            echo 'PR number must be positive' >&2
-            exit 1
-          }
-          pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER")
-          author=$(jq -er '.user.login | select(type == "string")' <<<"$pull")
-          if [[ "$author" != 'dependabot[bot]' ]]; then
-            exit 0
-          fi
-          if ! jq -e --arg repo "$GH_REPO" '
-            .state == "open" and
-            .base.repo.full_name == $repo and
-            .head.repo.full_name == $repo and
-            ((.html_url | type) == "string") and
-            (.html_url | startswith("https://github.com/" + $repo + "/pull/"))
-          ' <<<"$pull" > /dev/null; then
-            echo 'Dependabot PR state is not trusted; refusing to leave stale auto-merge enabled' >&2
-            exit 1
-          fi
-          if jq -e '.auto_merge != null' <<<"$pull" > /dev/null; then
-            url=$(jq -er '.html_url' <<<"$pull")
-            gh pr merge "$url" --disable-auto
-          fi
       - name: Validate trusted solver source
         id: source
         shell: bash
@@ -223,16 +223,6 @@ jobs:
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           EXPECTED_HEAD: ${{ steps.pr.outputs.head }}
         run: bash .github/workflows/scripts/fetch-pr-state.sh
-      - name: Fetch verified Dependabot metadata
-        if: steps.pr.outputs.dependency == 'true'
-        id: metadata
-        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
-        env:
-          # Supply the freshly verified PR payload for manual and check-run events
-          GITHUB_EVENT_PATH: ${{ steps.pr-state.outputs.event }}
-        with:
-          compat-lookup: true
-          github-token: ${{ steps.app-token.outputs.token }}
       - name: Review the diff and current CI evidence
         id: review
         shell: bash
@@ -243,33 +233,23 @@ jobs:
           RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
           RADY_HARNESS: ${{ inputs.harness }}
           RADY_REPOSITORY_PRIVATE: ${{ inputs.repository-private }}
+          RADY_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
+          RADY_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
+          RADY_XAI_API_KEY: ${{ secrets.xai-api-key }}
+          RADY_GROQ_API_KEY: ${{ secrets.groq-api-key }}
+          RADY_CLOUDFLARE_API_TOKEN: ${{ secrets.cloudflare-api-token }}
+          RADY_CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+          RADY_OPENROUTER_API_KEY: ${{ secrets.openrouter-api-key }}
+          RADY_GEMINI_PRIVATE_OK: ${{ inputs.gemini-private-ok }}
+          RADY_CEREBRAS_PRIVATE_OK: ${{ inputs.cerebras-private-ok }}
+          RADY_XAI_PRIVATE_OK: ${{ inputs.xai-private-ok }}
+          RADY_GROQ_PRIVATE_OK: ${{ inputs.groq-private-ok }}
+          RADY_CLOUDFLARE_PRIVATE_OK: ${{ inputs.cloudflare-private-ok }}
+          RADY_OPENROUTER_PRIVATE_OK: ${{ inputs.openrouter-private-ok }}
           GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           REQUIRED_CHECKS: ${{ inputs.required-checks }}
           EXPECTED_HEAD: ${{ steps.pr-state.outputs.head }}
-          SCORE: ${{ steps.metadata.outputs.compatibility-score }}
-          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
-          MAINTAINER_CHANGES: ${{ steps.metadata.outputs.maintainer-changes }}
+          UPDATE_TYPE: ${{ steps.pr.outputs.update_type }}
+          MAINTAINER_CHANGES: ${{ steps.pr.outputs.maintainer_changes }}
         run: target/release/rady agent review --repo "$GH_REPO" --pr "$PR_NUMBER"
-      - name: Require protected branch and enable auto-merge
-        if: >-
-          steps.review.outputs.enable_auto_merge == 'true' &&
-          fromJSON(steps.metadata.outputs.compatibility-score || '0') >= 95 &&
-          fromJSON(steps.metadata.outputs.compatibility-score || '0') <= 100 &&
-          contains(fromJSON('["version-update:semver-patch","version-update:semver-minor"]'), steps.metadata.outputs.update-type) &&
-          steps.metadata.outputs.maintainer-changes == 'false' &&
-          steps.pr-state.outputs.mergeable == 'true' &&
-          steps.pr-state.outputs.mergeable_state == 'clean'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          GH_REPO: ${{ inputs.repo }}
-          PR_URL: ${{ steps.pr-state.outputs.url }}
-          HEAD_SHA: ${{ steps.pr-state.outputs.head }}
-          BASE_BRANCH: ${{ steps.pr-state.outputs.base }}
-        run: |
-          set -euo pipefail
-          branch=$(jq -rn --arg branch "$BASE_BRANCH" '$branch | @uri')
-          gh api "repos/$GH_REPO/branches/$branch/protection" |
-            jq -e '.enforce_admins.enabled == true and (.required_status_checks | .strict == true and ((.contexts | length) + (.checks | length) > 0))' > /dev/null
-          gh pr merge "$PR_URL" --auto --squash --match-head-commit "$HEAD_SHA"
