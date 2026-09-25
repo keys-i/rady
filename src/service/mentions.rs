@@ -8,15 +8,12 @@ use crate::Result;
 use crate::github::{self, GitHub};
 use crate::setup;
 
-use super::{SweepArgs, owner_matches, record_sweep_failure, validate_owner_filter};
+use super::{ServeArgs, owner_matches, record_sweep_failure, validate_owner_filter};
 
-pub(super) fn sweep(arguments: SweepArgs) -> Result<()> {
-    let token = env::var("GH_TOKEN").unwrap_or_default();
-    sweep_with_token(&arguments, &token, &mut BTreeMap::new())
-}
+const MAX_MENTION_CURSORS: usize = 512;
 
 pub(super) fn sweep_with_token(
-    arguments: &SweepArgs,
+    arguments: &ServeArgs,
     token: &str,
     cursors: &mut BTreeMap<String, u64>,
 ) -> Result<()> {
@@ -27,13 +24,7 @@ pub(super) fn sweep_with_token(
         .ok()
         .filter(|value| !value.is_empty());
     let mut failures = Vec::new();
-    let visible = repositories
-        .iter()
-        .filter_map(|repository| repository["full_name"].as_str())
-        .filter(|name| github::validate_repository(name).is_ok())
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>();
-    cursors.retain(|name, _| visible.contains(name));
+    bound_cursors(cursors);
     let mut repositories = repositories.iter().collect::<Vec<_>>();
     repositories.sort_by_key(|repository| repository["full_name"].as_str().unwrap_or_default());
     for repository in repositories {
@@ -124,7 +115,7 @@ pub(super) fn sweep_with_token(
                 .filter_map(|comment| comment["id"].as_u64())
                 .max()
             {
-                cursors.insert(name.to_owned(), last);
+                remember_cursor(cursors, name, last);
             }
         }
     }
@@ -141,6 +132,28 @@ pub(super) fn sweep_with_token(
         failures.len(),
         failures.join("; ")
     )
+}
+
+fn remember_cursor(cursors: &mut BTreeMap<String, u64>, repository: &str, comment: u64) {
+    cursors.insert(repository.to_owned(), comment);
+    bound_cursors(cursors);
+}
+
+fn bound_cursors(cursors: &mut BTreeMap<String, u64>) {
+    if cursors.len() <= MAX_MENTION_CURSORS {
+        return;
+    }
+    let mut newest = cursors
+        .iter()
+        .map(|(repository, comment)| (repository.clone(), *comment))
+        .collect::<Vec<_>>();
+    newest.sort_unstable_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    newest.truncate(MAX_MENTION_CURSORS);
+    let keep = newest
+        .into_iter()
+        .map(|(repository, _)| repository)
+        .collect::<BTreeSet<_>>();
+    cursors.retain(|repository, _| keep.contains(repository));
 }
 
 fn comment_issue(repo: &str, issue_url: &str) -> Option<u64> {
@@ -178,5 +191,27 @@ mod tests {
         ] {
             assert_eq!(comment_issue(repo, url), expected, "{url}");
         }
+    }
+
+    #[test]
+    fn cursor_memory_survives_another_installation_and_has_a_recent_window_fallback() {
+        let mut cursors = BTreeMap::from([
+            ("first/repository".to_owned(), 3_100),
+            ("second/repository".to_owned(), 3_099),
+        ]);
+        bound_cursors(&mut cursors);
+        assert_eq!(cursors.get("first/repository"), Some(&3_100));
+
+        for comment in 1..=(MAX_MENTION_CURSORS as u64 + 1) {
+            remember_cursor(
+                &mut cursors,
+                &format!("owner/repository-{comment}"),
+                comment,
+            );
+        }
+
+        assert_eq!(cursors.len(), MAX_MENTION_CURSORS);
+        assert_eq!(cursors.get("first/repository"), Some(&3_100));
+        assert!(!cursors.contains_key("owner/repository-1"));
     }
 }

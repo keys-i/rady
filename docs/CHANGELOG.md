@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.7](https://github.com/keys-i/rady/compare/v0.6.6...v0.6.7) (2026-09-25)
+
+### Changes
+
+* rename the hosted GitHub App and mention to RadDuck and `@radduck` with no legacy alias
+* rotate bounded dependency review windows fairly and honour the configured source pin
+* leave unsupported, grouped, or ambiguous Dependabot updates for protected human review
+
+### Breaking changes
+
+* require every connected repository to rerun setup for the new Terms and Privacy receipt
+* replace machine-readable setup preview fields `new_app` and `identity` with `app`
+* remove the standalone `dependasolver` binary, legacy App registration and auth settings, and root agent aliases
+
+### Security
+
+* keep public App contents access read-only; RadDuck cannot push contents or perform merges
+* use short-lived installation tokens for discovery and mentions, then repository-scoped review tokens
+
 ## [0.6.6](https://github.com/keys-i/rady/compare/v0.6.5...v0.6.6) (2026-09-25)
 
 ### Features
@@ -45,7 +64,7 @@
 ### Features
 
 * add `rady setup` with repository and CI-check discovery
-* centralize radyybot orchestration without target-repository secrets or workflows
+* centralize GitHub App orchestration without target-repository secrets or workflows
 
 ### Security
 

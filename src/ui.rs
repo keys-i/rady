@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::Result;
 
-pub(crate) const RADY_DUCK_PNG: &[u8] = include_bytes!("dependasolver/assets/rady-app-duck.png");
+pub(crate) const RADY_DUCK_PNG: &[u8] = include_bytes!("rady_ui/assets/rady-app-duck.png");
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]

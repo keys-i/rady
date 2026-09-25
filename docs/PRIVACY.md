@@ -1,33 +1,29 @@
 # Rady privacy policy
 
-Effective 25 September 2026 · version `2026-09-25`
+Effective 25 September 2026 · version `2026-09-25-p1`
 
-This policy describes the hosted radyybot service maintained through `keys-i/rady`. A self-hosted Rady operator is responsible for that deployment's privacy practices.
+This policy covers the hosted RadDuck service maintained through `keys-i/rady`. A self-hosted operator is responsible for its own deployment.
 
-## What Rady handles
+## Information Rady handles
 
-Rady receives the GitHub account and repository information made available to its installation. That can include usernames, author associations, issue and pull-request text, comments, diffs, filenames, commit identifiers, check results and links. It also creates a closed consent issue and records its IDs, the accepting GitHub login, policy versions and acceptance time in `.github/rady.json`.
+Rady receives the GitHub account and repository information exposed to its App installation. That can include usernames, issue and pull-request text, comments, diffs, paths, commit IDs, check results, and links. It stores consent receipt IDs, the accepting login, policy versions, and acceptance time in the target repository’s `.github/rady.json`.
 
-Rady uses this information to authenticate requests, answer `@radyybot` mentions, review eligible pull requests, prevent duplicate work, diagnose failures and protect the service. It does not sell personal information or use repository content to advertise to you.
+Rady uses this information to authenticate work, answer `@radduck`, review eligible pull requests, prevent duplicate work, and protect the service. It does not sell repository content or use it for advertising.
 
 ## Where information goes
 
-GitHub hosts the App installation, repository data, comments, reviews, configuration and Actions logs. Hosted model requests may send a bounded copy of relevant evidence to Google Gemini, Cerebras, xAI, Groq, Cloudflare Workers AI, or OpenRouter when centrally configured. Public repositories may use configured providers by default. Private or unknown repositories require a separate per-provider opt-in. Each provider handles submitted data under its own terms and privacy controls, and may process it in the United States or other countries listed in its policy.
+GitHub hosts App installations, repository data, comments, reviews, configuration, and Actions logs. Hosted model requests may send a bounded copy of relevant evidence to a centrally configured provider. Public-repository evidence may use a configured provider; private or unknown repository evidence needs that provider’s separate opt-in. Provider retention, training, and regional processing follow the provider account and terms in force for that request.
 
-A self-hosted operator may enable Laya for intent and model-tier decisions. Rady sends its bounded input only to an authenticated fixed loopback endpoint on the same machine; Laya does not generate the answer or receive provider credentials.
-
-App private keys and model credentials stay in the `keys-i/rady` GitHub Actions secret store. Rady removes them from native agent children and does not write them into target repositories or model prompts.
+App private keys and model credentials stay in the central service. They are not copied into target repositories, prompts, or local child processes. The service uses short-lived installation-scoped tokens for mentions and discovery, and repository-scoped tokens for selected reviews.
 
 ## Retention and control
 
-Rady has no separate user-profile or prompt database. Acceptance records remain in the target repository. GitHub comments, reviews, configuration and Actions logs remain under GitHub and repository retention controls. Model providers retain requests according to the account and provider policy in force when a request is made. Local CLI evidence remains on the machine where Rady ran until its operator removes it.
+Rady has no separate user-profile or prompt database. GitHub comments, reviews, configuration, and Actions logs follow GitHub and repository retention settings. Providers retain requests under their own terms. Local CLI evidence remains on the operator’s machine until removed.
 
-You can inspect or correct repository-held information through GitHub. You can stop new processing by uninstalling the App, remove `.github/rady.json`, delete comments where GitHub permits, or disable a model provider. For an access, correction or privacy complaint that cannot be handled in the repository, contact the maintainer through the private reporting route in [Security](SECURITY.md) and do not include unnecessary repository content.
+You can stop new processing by uninstalling the App or removing `.github/rady.json`, and can remove GitHub content where GitHub allows. For an access, correction, or privacy concern that cannot be handled in the repository, use the private route in [Security](SECURITY.md) without sending unnecessary repository content.
 
-## Automated decisions and security
+## Automated work
 
-Rady uses rules plus model output to recommend or approve pull-request actions. It exposes evidence and blockers, and it does not bypass branch protection. Repository owners control installation, checks, provider opt-ins and final merge policy.
+Rady uses rules and model output to prepare answers and reviews. It leaves unsupported or ambiguous dependency updates for manual review and does not enable, disable, or perform merges. Repository owners retain the final merge decision.
 
-Rady limits evidence and output sizes, validates trusted actors, uses short-lived repository-scoped App tokens and rejects unaccepted installations. No service can promise absolute security; report suspected exposure promptly so access can be revoked and credentials rotated.
-
-Material changes get a new policy version and pause central processing until an authorised user accepts it.
+Material policy changes get a new version and pause central processing until an authorised administrator reruns setup and accepts them.

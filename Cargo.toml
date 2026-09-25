@@ -1,6 +1,6 @@
 [package]
 name = "rady"
-version = "0.6.6"
+version = "0.6.7"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes, dependency reviews, and local-first agent workflows"
@@ -14,13 +14,11 @@ include = [
     "/.github/workflows/orchestrate.yml",
     "/.github/workflows/solve.yml",
     "/.github/workflows/scripts/fetch-pr-state.sh",
-    "/.github/workflows/scripts/select-central-targets.sh",
     "/.github/workflows/scripts/validate-pr-trust.sh",
     "/docs/*.md",
     "/docs/assets/rady-poster.webp",
     "/src/*.rs",
     "/src/agent/*.rs",
-    "/src/bin/*.rs",
     "/src/delivery/*.rs",
     "/src/github/*.rs",
     "/src/mentions/*.rs",
@@ -29,9 +27,7 @@ include = [
     "/src/routing/*.rs",
     "/src/service/*.rs",
     "/src/setup/*.rs",
-    "/src/dependasolver/assets/*.png",
-    "/src/dependasolver/templates/*.html",
-    "/src/dependasolver/templates/*.yml",
+    "/src/rady_ui/assets/*.png",
     "/tests/*.rs",
     "/Cargo.lock",
     "/LICENSE",
@@ -64,7 +60,3 @@ unsafe_code = "deny"
 [[bin]]
 name = "rady"
 path = "src/main.rs"
-
-[[bin]]
-name = "dependasolver"
-path = "src/bin/dependasolver.rs"

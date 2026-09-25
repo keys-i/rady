@@ -17,18 +17,28 @@ const APP_API_BASE: &str = "https://api.github.com/";
 const APP_API_TIMEOUT: Duration = Duration::from_secs(30);
 const HTTP_STATUS_MARKER: &str = "\nRADY_HTTP_STATUS:";
 const MAX_APP_API_RESPONSE_BYTES: usize = 1_000_000;
+const MAX_APP_INSTALLATIONS: usize = 256;
+const MAX_INSTALLATION_SCAN: usize = 1_024;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InstallationTokenScope {
+    Mentions,
+    Targets,
+}
 
 pub(crate) fn mint_installation_tokens(
     private_key_pem: &str,
     issuer: &str,
     owner: Option<&str>,
+    scope: InstallationTokenScope,
+    installation_seed: usize,
 ) -> Result<Vec<String>> {
     if let Some(owner) = owner {
         validate_repository(&format!("{owner}/rady"))?;
     }
     let key = app_signing_key(private_key_pem)?;
-    let request = service_token_request();
-    app_installation_ids(&key, issuer, owner)?
+    let request = service_token_request(scope);
+    app_installation_ids(&key, issuer, owner, installation_seed)?
         .into_iter()
         .map(|installation| {
             let jwt = current_app_jwt(&key, issuer)?;
@@ -40,17 +50,31 @@ pub(crate) fn mint_installation_tokens(
         .collect()
 }
 
-fn service_token_request() -> Value {
-    serde_json::json!({
-        "permissions": {
+pub(crate) fn authenticated_app(private_key_pem: &str, issuer: &str) -> Result<Value> {
+    let key = app_signing_key(private_key_pem)?;
+    let jwt = current_app_jwt(&key, issuer)?;
+    app_api("app", None, "GET", false, &jwt)?
+        .ok_or_else(|| anyhow!("GitHub returned no App identity"))
+}
+
+fn service_token_request(scope: InstallationTokenScope) -> Value {
+    let permissions = match scope {
+        InstallationTokenScope::Mentions => serde_json::json!({
             "administration": "read",
             "checks": "read",
             "contents": "read",
             "issues": "write",
-            "pull_requests": "write",
+            "pull_requests": "read",
             "statuses": "read"
-        }
-    })
+        }),
+        InstallationTokenScope::Targets => serde_json::json!({
+            "administration": "read",
+            "contents": "read",
+            "issues": "read",
+            "pull_requests": "read"
+        }),
+    };
+    serde_json::json!({"permissions": permissions})
 }
 
 fn app_signing_key(private_key_pem: &str) -> Result<RsaKeyPair> {
@@ -91,7 +115,7 @@ fn unsigned_app_jwt(issuer: &str, now: u64) -> Result<String> {
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
     {
-        bail!("GitHub App client ID or App ID is invalid");
+        bail!("GitHub App client ID is invalid");
     }
     let issued_at = now.saturating_sub(60);
     let expires_at = now
@@ -144,9 +168,12 @@ fn decode_app_private_key(pem: &str) -> Result<(Vec<u8>, bool)> {
     bail!("GitHub App private key must be an unencrypted RSA PEM")
 }
 
-const MAX_APP_INSTALLATIONS: usize = 256;
-
-fn app_installation_ids(key: &RsaKeyPair, issuer: &str, owner: Option<&str>) -> Result<Vec<u64>> {
+fn app_installation_ids(
+    key: &RsaKeyPair,
+    issuer: &str,
+    owner: Option<&str>,
+    installation_seed: usize,
+) -> Result<Vec<u64>> {
     if let Some(owner) = owner {
         for endpoint in [
             format!("users/{owner}/installation"),
@@ -159,8 +186,8 @@ fn app_installation_ids(key: &RsaKeyPair, issuer: &str, owner: Option<&str>) -> 
         }
         bail!("the GitHub App is not installed for {owner}");
     }
-    let mut ids = Vec::new();
-    for page in 1..=3 {
+    let mut ids = Vec::with_capacity(MAX_INSTALLATION_SCAN);
+    for page in 1..=(MAX_INSTALLATION_SCAN / 100 + 1) {
         let jwt = current_app_jwt(key, issuer)?;
         let response = app_api(
             &format!("app/installations?per_page=100&page={page}"),
@@ -170,14 +197,35 @@ fn app_installation_ids(key: &RsaKeyPair, issuer: &str, owner: Option<&str>) -> 
             &jwt,
         )?
         .ok_or_else(|| anyhow!("GitHub returned no App installations"))?;
-        if append_installation_page(&mut ids, &response)? {
+        let complete = append_installation_page(&mut ids, &response)?;
+        if ids.len() >= MAX_INSTALLATION_SCAN {
+            eprintln!(
+                "RadDuck found more than {MAX_INSTALLATION_SCAN} installations; rotating through the first {MAX_INSTALLATION_SCAN}"
+            );
+            break;
+        }
+        if complete {
             if ids.is_empty() {
                 bail!("install the GitHub App before starting the service");
             }
-            return Ok(ids);
+            break;
         }
     }
-    bail!("GitHub App has too many installations; shard the service with --owner")
+    if ids.is_empty() {
+        bail!("install the GitHub App before starting the service");
+    }
+    select_installations(&mut ids, installation_seed);
+    Ok(ids)
+}
+
+fn select_installations(ids: &mut Vec<u64>, seed: usize) {
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.len() > MAX_APP_INSTALLATIONS {
+        let offset = seed % ids.len();
+        ids.rotate_left(offset);
+        ids.truncate(MAX_APP_INSTALLATIONS);
+    }
 }
 
 fn app_api(
@@ -187,7 +235,7 @@ fn app_api(
     missing: bool,
     jwt: &str,
 ) -> Result<Option<Value>> {
-    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect radyybot"))?;
+    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect RadDuck"))?;
     let payload = payload.map(serde_json::to_string).transpose()?;
     let arguments = app_api_arguments(method, endpoint, payload.as_deref());
     let authorization = app_authorization(jwt);
@@ -277,9 +325,9 @@ fn app_api_response(code: i32, output: &str, missing: bool) -> Result<Option<Str
             (63, _) => format!(
                 "GitHub returned more than {MAX_APP_API_RESPONSE_BYTES} bytes; narrow the request"
             ),
-            (_, 401) => "GitHub didn't accept radyybot's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
-            (_, 403) => "GitHub wouldn't allow this App request (403); check radyybot's permissions and installation".to_owned(),
-            (_, 404) => "GitHub couldn't find this App resource (404); check the radyybot installation".to_owned(),
+            (_, 401) => "GitHub didn't accept RadDuck's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
+            (_, 403) => "GitHub wouldn't allow this App request (403); check RadDuck's permissions and installation".to_owned(),
+            (_, 404) => "GitHub couldn't find this App resource (404); check the RadDuck installation".to_owned(),
             (_, 429) => "GitHub's rate limit is full (429); try again after it resets".to_owned(),
             _ if status != 0 => format!("GitHub rejected the App request (HTTP {status})"),
             _ => format!("Rady couldn't reach GitHub (transport {code})"),
@@ -297,8 +345,8 @@ fn append_installation_page(ids: &mut Vec<u64>, response: &Value) -> Result<bool
         .as_array()
         .ok_or_else(|| anyhow!("GitHub returned invalid App installations"))?;
     for installation in installations {
-        if ids.len() == MAX_APP_INSTALLATIONS {
-            bail!("GitHub App has too many installations; shard the service with --owner");
+        if ids.len() == MAX_INSTALLATION_SCAN {
+            return Ok(false);
         }
         ids.push(installation_id(installation)?);
     }
@@ -384,13 +432,19 @@ mod tests {
 
     #[test]
     fn app_credentials_and_api_values_fail_closed() -> Result<()> {
-        let request = service_token_request();
-        assert_eq!(request["permissions"]["contents"], "read");
-        assert_eq!(request["permissions"]["issues"], "write");
-        assert_eq!(request["permissions"]["pull_requests"], "write");
+        let mentions = service_token_request(InstallationTokenScope::Mentions);
+        assert_eq!(mentions["permissions"]["issues"], "write");
+        assert_eq!(mentions["permissions"]["checks"], "read");
         assert_eq!(
-            request["permissions"].as_object().map(|value| value.len()),
+            mentions["permissions"].as_object().map(|value| value.len()),
             Some(6)
+        );
+        let targets = service_token_request(InstallationTokenScope::Targets);
+        assert_eq!(targets["permissions"]["issues"], "read");
+        assert!(targets["permissions"].get("checks").is_none());
+        assert_eq!(
+            targets["permissions"].as_object().map(|value| value.len()),
+            Some(4)
         );
 
         for (pem, expected) in [
@@ -443,8 +497,21 @@ mod tests {
                 .map(|id| serde_json::json!({"id": id}))
                 .collect(),
         );
-        assert!(append_installation_page(&mut Vec::new(), &oversized).is_err());
+        let mut bounded = Vec::new();
+        assert!(!append_installation_page(&mut bounded, &oversized)?);
+        assert_eq!(bounded.len(), MAX_APP_INSTALLATIONS + 1);
+        select_installations(&mut bounded, 0);
+        assert_eq!(bounded.len(), MAX_APP_INSTALLATIONS);
         Ok(())
+    }
+
+    #[test]
+    fn installation_selection_is_bounded_and_rotates() {
+        let mut ids = (1..=300).rev().collect::<Vec<_>>();
+        select_installations(&mut ids, 299);
+        assert_eq!(ids.len(), MAX_APP_INSTALLATIONS);
+        assert_eq!(ids[0], 300);
+        assert_eq!(ids[1], 1);
     }
 
     #[test]
@@ -484,7 +551,7 @@ mod tests {
         let error = app_api_response(22, "hidden\nRADY_HTTP_STATUS:401", false)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("didn't accept radyybot's App credentials"));
+        assert!(error.contains("didn't accept RadDuck's App credentials"));
         assert!(!error.contains("hidden"));
     }
 }

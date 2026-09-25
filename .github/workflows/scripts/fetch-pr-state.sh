@@ -22,10 +22,7 @@ jq -e --arg head "$EXPECTED_HEAD" '
   (.base.ref | type == "string" and length > 0) and
   (.base.sha | type == "string" and test("^[a-f0-9]{40}$"))
 ' <<<"$pull" > /dev/null
-event="$RUNNER_TEMP/rady-pull-request-event.json"
-jq -n --argjson pull "$pull" '{pull_request: $pull}' > "$event"
 {
-  echo "event=$event"
   echo "url=$(jq -r .html_url <<<"$pull")"
   echo "head=$(jq -r .head.sha <<<"$pull")"
   echo "base=$(jq -r .base.ref <<<"$pull")"

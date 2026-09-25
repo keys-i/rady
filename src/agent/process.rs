@@ -362,6 +362,8 @@ mod tests {
         for name in [
             "ACME_API_KEY",
             "RADY_LAYA_API_KEY",
+            "RADY_APP_ID",
+            "RADY_APP_TOKEN_COMMAND",
             "CLOUD_TOKEN",
             "AWS_PROFILE",
             "GOOGLE_APPLICATION_CREDENTIALS",

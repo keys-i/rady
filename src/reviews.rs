@@ -16,13 +16,14 @@ use crate::github::GitHub;
 use crate::model::{INSTRUCTIONS, model_review};
 
 pub(crate) use evidence::allowed_dependency_path;
-pub use evidence::{checks, ci_blockers, compatibility, files_context, resolve};
+pub use evidence::{
+    DependabotMetadata, checks, ci_blockers, compatibility, files_context, resolve,
+};
 pub use presentation::{decision, render};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ReviewOutcome {
     pub approved: bool,
-    pub enable_auto_merge: bool,
     pub published: bool,
 }
 
@@ -35,7 +36,6 @@ pub fn review_pr(
     bot_slug: &str,
     harness: Harness,
     repository_private: Option<bool>,
-    score: &str,
     update_type: &str,
     maintainer_changes: &str,
     expected_head: &str,
@@ -49,7 +49,13 @@ pub fn review_pr(
     {
         bail!("selected App slug and valid external required checks are required");
     }
-    let (pull, dependency) = resolve(github, number)?;
+    let (pull, dependency, metadata) = resolve(github, number)?;
+    if let Some(metadata) = metadata {
+        if update_type != metadata.update_type || maintainer_changes != metadata.maintainer_changes
+        {
+            bail!("Dependabot update metadata changed; rerun on the verified pull request state");
+        }
+    }
     let head = text(&pull, &["head", "sha"])?;
     if !expected_head.is_empty() && head != expected_head {
         bail!("the PR changed since this workflow started; rerun on the new commit");
@@ -85,7 +91,7 @@ pub fn review_pr(
         "title": pull["title"].as_str().unwrap_or_default().chars().take(2000).collect::<String>(),
         "description": pull["body"].as_str().unwrap_or_default().chars().take(12000).collect::<String>(),
         "dependency": dependency, "files": files, "complete_diff": complete,
-        "checks": rows, "score": compatibility(score), "update_type": update_type,
+        "checks": rows, "update_type": update_type,
         "maintainer_changes": maintainer_changes,
     });
     let fingerprint = Sha256::digest(serde_json::to_vec(&json!([
@@ -114,15 +120,12 @@ pub fn review_pr(
         let approved = previous["state"] == "APPROVED";
         return Ok(ReviewOutcome {
             approved,
-            enable_auto_merge: dependency
-                && approved
-                && presentation::auto_merge_ready(protection.as_ref()),
             published: false,
         });
     }
     let replacement = (|| -> Result<_> {
         let result = model_review(&context, model, harness, repository_private)?;
-        let (current, _) = resolve(github, number)?;
+        let (current, _, _) = resolve(github, number)?;
         if current["head"]["sha"] != context["head"] || current["base"]["sha"] != context["base"] {
             bail!("the PR changed during review; rerun on the new commit");
         }
@@ -157,9 +160,6 @@ pub fn review_pr(
     let approved = event == "APPROVE";
     Ok(ReviewOutcome {
         approved,
-        enable_auto_merge: approved
-            && dependency
-            && presentation::auto_merge_ready(protection.as_ref()),
         published: true,
     })
 }

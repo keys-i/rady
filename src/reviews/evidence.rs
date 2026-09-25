@@ -6,7 +6,13 @@ use serde_json::{Value, json};
 use crate::Result;
 use crate::github::GitHub;
 
-pub fn resolve(github: &GitHub, number: u64) -> Result<(Value, bool)> {
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DependabotMetadata {
+    pub update_type: String,
+    pub maintainer_changes: String,
+}
+
+pub fn resolve(github: &GitHub, number: u64) -> Result<(Value, bool, Option<DependabotMetadata>)> {
     let pull = github.api(&format!("pulls/{number}"), None, "GET")?;
     if pull["state"] != "open" || pull["draft"].as_bool() != Some(false) {
         bail!("only open, ready-for-review PRs are supported");
@@ -23,7 +29,93 @@ pub fn resolve(github: &GitHub, number: u64) -> Result<(Value, bool)> {
     if dependency && pull["head"]["repo"]["full_name"] != github.repo() {
         bail!("Dependabot updates must originate in the target repository");
     }
-    Ok((pull, dependency))
+    let metadata = dependency
+        .then(|| dependabot_metadata(github, number, &pull))
+        .transpose()?;
+    Ok((pull, dependency, metadata))
+}
+
+fn dependabot_metadata(github: &GitHub, number: u64, pull: &Value) -> Result<DependabotMetadata> {
+    let expected_head = text(pull, &["head", "sha"])?;
+    let commits = github.pages(&format!("pulls/{number}/commits"), None)?;
+    Ok(metadata_from_commits(&commits, expected_head)
+        .unwrap_or_else(DependabotMetadata::unsupported))
+}
+
+impl DependabotMetadata {
+    fn unsupported() -> Self {
+        Self {
+            update_type: "unsupported".to_owned(),
+            maintainer_changes: "unknown".to_owned(),
+        }
+    }
+}
+
+fn metadata_from_commits(commits: &[Value], expected_head: &str) -> Option<DependabotMetadata> {
+    let [commit] = commits else {
+        return None;
+    };
+    if commit["sha"] != expected_head {
+        return None;
+    }
+    if commit["author"]["login"] != "dependabot[bot]"
+        || commit["committer"]["login"] != "dependabot[bot]"
+        || commit["commit"]["verification"]["verified"] != true
+    {
+        return None;
+    }
+    let update_type = classify_dependabot_subject(commit["commit"]["message"].as_str()?)?;
+    Some(DependabotMetadata {
+        update_type,
+        maintainer_changes: "false".to_owned(),
+    })
+}
+
+fn classify_dependabot_subject(message: &str) -> Option<String> {
+    let subject = message.lines().next()?.strip_prefix("Bump ")?;
+    let (package, versions) = subject.rsplit_once(" from ")?;
+    let (from, to) = versions.split_once(" to ")?;
+    if package.is_empty()
+        || from.is_empty()
+        || to.is_empty()
+        || package.chars().any(char::is_whitespace)
+        || from.chars().any(char::is_whitespace)
+        || to.chars().any(char::is_whitespace)
+    {
+        return None;
+    }
+    let from = numeric_version(from)?;
+    let to = numeric_version(to)?;
+    if to <= from {
+        return None;
+    }
+    let kind = if to[0] != from[0] {
+        "major"
+    } else if to[1] != from[1] {
+        "minor"
+    } else {
+        "patch"
+    };
+    Some(format!("version-update:semver-{kind}"))
+}
+
+fn numeric_version(value: &str) -> Option<[u64; 3]> {
+    let value = value.strip_prefix('v').unwrap_or(value);
+    let parts = value.split('.').collect::<Vec<_>>();
+    if !(1..=3).contains(&parts.len()) {
+        return None;
+    }
+    let mut version = [0; 3];
+    for (index, part) in parts.into_iter().enumerate() {
+        if part.is_empty()
+            || !part.bytes().all(|byte| byte.is_ascii_digit())
+            || (part.len() > 1 && part.starts_with('0'))
+        {
+            return None;
+        }
+        version[index] = part.parse().ok()?;
+    }
+    Some(version)
 }
 
 pub fn checks(github: &GitHub, head: &str) -> Result<Vec<Value>> {
@@ -327,6 +419,110 @@ mod tests {
             ("a".repeat(39), false),
         ] {
             assert_eq!(is_sha(&value), valid);
+        }
+    }
+
+    #[test]
+    fn table_driven_dependabot_subject_classification_is_fail_closed() {
+        for (subject, expected) in [
+            (
+                "Bump actions/checkout from v4.1.7 to v4.2.2",
+                Some("version-update:semver-minor"),
+            ),
+            (
+                "Bump serde from 1.0.0 to 1.0.1",
+                Some("version-update:semver-patch"),
+            ),
+            (
+                "Bump rust from 1.85 to 2.0",
+                Some("version-update:semver-major"),
+            ),
+            ("Bump serde from 1.0.0-beta.1 to 1.0.0", None),
+            ("Bump image digest from abc to def", None),
+            ("Bump serde from 1.0.1 to 1.0.0", None),
+            (
+                "Bump serde from 1.0.0 to 1.0.1\n\nDependabot command: @dependabot rebase",
+                Some("version-update:semver-patch"),
+            ),
+            ("Bump serde from 1.0.0 to 1.0.1 and rand", None),
+            ("Bump serde and rand from 1.0.0 to 1.0.1", None),
+        ] {
+            assert_eq!(
+                classify_dependabot_subject(subject).as_deref(),
+                expected,
+                "{subject}"
+            );
+        }
+    }
+
+    #[test]
+    fn dependabot_metadata_is_trusted_only_for_one_verified_bot_bump() {
+        let commit = json!({
+            "sha": "a".repeat(40),
+            "author": {"login": "dependabot[bot]"},
+            "committer": {"login": "dependabot[bot]"},
+            "commit": {
+                "message": "Bump serde from 1.0.0 to 1.0.1\n\nDependabot command: @dependabot rebase",
+                "verification": {"verified": true}
+            }
+        });
+        for (commits, head, update_type, maintainer_changes) in [
+            (
+                vec![commit.clone()],
+                "a".repeat(40),
+                "version-update:semver-patch",
+                "false",
+            ),
+            (
+                vec![json!({
+                    "sha": "a".repeat(40),
+                    "author": {"login": "dependabot[bot]"},
+                    "committer": {"login": "web-flow"},
+                    "commit": {"message": "Bump serde from 1.0.0 to 1.0.1", "verification": {"verified": true}}
+                })],
+                "a".repeat(40),
+                "unsupported",
+                "unknown",
+            ),
+            (
+                vec![commit.clone()],
+                "b".repeat(40),
+                "unsupported",
+                "unknown",
+            ),
+            (
+                vec![commit.clone(), commit.clone()],
+                "a".repeat(40),
+                "unsupported",
+                "unknown",
+            ),
+            (
+                vec![json!({
+                    "sha": "a".repeat(40),
+                    "author": {"login": "dependabot[bot]"},
+                    "committer": {"login": "dependabot[bot]"},
+                    "commit": {"message": "Bump serde from 1.0.0 to 1.0.1", "verification": {"verified": false}}
+                })],
+                "a".repeat(40),
+                "unsupported",
+                "unknown",
+            ),
+            (
+                vec![json!({
+                    "sha": "a".repeat(40),
+                    "author": {"login": "dependabot[bot]"},
+                    "committer": {"login": "someone-else"},
+                    "commit": {"message": "Bump serde from 1.0.0 to 1.0.1", "verification": {"verified": true}}
+                })],
+                "a".repeat(40),
+                "unsupported",
+                "unknown",
+            ),
+        ] {
+            let metadata = metadata_from_commits(&commits, &head)
+                .unwrap_or_else(DependabotMetadata::unsupported);
+            assert_eq!(metadata.update_type, update_type);
+            assert_eq!(metadata.maintainer_changes, maintainer_changes);
         }
     }
 

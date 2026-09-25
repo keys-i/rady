@@ -7,7 +7,7 @@ use crate::model::{ModelReview, Risk};
 
 use super::{allowed_dependency_path, ci_blockers};
 
-pub(super) fn auto_merge_ready(protection: Option<&Value>) -> bool {
+fn approval_protection_ready(protection: Option<&Value>) -> bool {
     let Some(protection) = protection else {
         return false;
     };
@@ -47,12 +47,6 @@ pub fn decision(
                 .map(Vec::as_slice)
                 .unwrap_or_default(),
         ));
-        match context["score"].as_f64() {
-            None => blockers.push("Compatibility is unavailable; it needs manual review".to_owned()),
-            Some(score) if score < 80.0 => blockers.push(format!("Compatibility is {score}%, below 80%; investigate checks and upstream release notes")),
-            Some(score) if score < 95.0 => blockers.push(format!("Compatibility is {score}%; automatic approval requires at least 95%")),
-            Some(_) => {}
-        }
         if !matches!(
             context["update_type"].as_str(),
             Some("version-update:semver-patch" | "version-update:semver-minor")
@@ -64,6 +58,12 @@ pub fn decision(
         if context["maintainer_changes"] != "false" {
             blockers.push(
                 "Maintainer changes have not been ruled out; check package ownership".to_owned(),
+            );
+        }
+        if !approval_protection_ready(protection) {
+            blockers.push(
+                "The base branch is not protected with strict required checks; merge this manually"
+                    .to_owned(),
             );
         }
     }
@@ -170,17 +170,6 @@ pub fn render(
             .iter()
             .map(|item| format!("- {}", markdown_text(item))),
     );
-    if context["dependency"].as_bool() == Some(true) {
-        lines.extend([
-            String::new(),
-            format!(
-                "Compatibility: {}",
-                context["score"]
-                    .as_f64()
-                    .map_or_else(|| "unavailable".to_owned(), |score| format!("{score}%"))
-            ),
-        ]);
-    }
     if !blockers.is_empty() {
         lines.extend([String::new(), "Before merge".to_owned()]);
         lines.extend(
@@ -276,9 +265,6 @@ fn repair_handoff(
         format!("- Reviewed head: {}", markdown_text(head)),
         format!("- Review risk: {:?}", review.risk),
     ]);
-    if let Some(score) = context["score"].as_f64() {
-        lines.push(format!("- Compatibility: {score}%"));
-    }
     if let Some(update_type) = context["update_type"]
         .as_str()
         .filter(|value| !value.is_empty())
@@ -371,11 +357,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ci_evidence_is_independent_from_auto_merge_protection() -> Result<()> {
+    fn protection_requires_admin_enforcement_and_strict_checks() -> Result<()> {
         let success = |name: &str| json!({"name": name, "state": "success", "app_id": null});
         let protected = json!({"enforce_admins": {"enabled": true}, "required_status_checks": {"strict": true, "contexts": ["protected"], "checks": []}});
         let unprotected = json!({"enforce_admins": {"enabled": false}, "required_status_checks": {"strict": false, "contexts": [], "checks": []}});
-        for (protection, required, rows, blockers, auto_merge) in [
+        for (protection, required, rows, blockers, ready) in [
             (None, vec!["test"], vec![success("test")], 0, false),
             (
                 Some(unprotected),
@@ -408,7 +394,7 @@ mod tests {
                 .len(),
                 blockers
             );
-            assert_eq!(auto_merge_ready(protection.as_ref()), auto_merge);
+            assert_eq!(approval_protection_ready(protection.as_ref()), ready);
         }
         Ok(())
     }
@@ -497,7 +483,7 @@ mod tests {
             blockers: vec![],
             minor: vec![],
         };
-        let context = json!({"number": 42, "url": "https://github.com/owner/repo/pull/42", "head": "a".repeat(40), "score": 96.0, "update_type": "version-update:semver-patch", "maintainer_changes": "false"});
+        let context = json!({"number": 42, "url": "https://github.com/owner/repo/pull/42", "head": "a".repeat(40), "update_type": "version-update:semver-patch", "maintainer_changes": "false"});
         for (blockers, waiting) in [
             (
                 vec!["`test` hasn't reported for this commit yet".to_owned()],
@@ -505,8 +491,8 @@ mod tests {
             ),
             (
                 vec![
-                    "Compatibility is unavailable; it needs manual review".to_owned(),
-                    "Compatibility is unavailable; it needs manual review".to_owned(),
+                    "The base branch is not protected with strict required checks; merge this manually".to_owned(),
+                    "The base branch is not protected with strict required checks; merge this manually".to_owned(),
                 ],
                 false,
             ),
@@ -522,7 +508,6 @@ mod tests {
                     "If code needs to change, open a maintainer replacement PR instead of pushing to the Dependabot branch.",
                     r"- Source: \#42 https://github.com/owner/repo/pull/42",
                     "- Reviewed head: aaaa",
-                    "- Compatibility: 96%",
                     "- Update type: version-update:semver-patch",
                     "- Maintainer changes: false",
                     "- Allowed files: approved manifests, lockfiles, Actions workflows and Dockerfiles only",
@@ -532,9 +517,9 @@ mod tests {
                 }
                 if blockers
                     .iter()
-                    .any(|blocker| blocker.contains("Compatibility is unavailable"))
+                    .any(|blocker| blocker.contains("base branch is not protected"))
                 {
-                    assert_eq!(body.matches("Compatibility is unavailable").count(), 1);
+                    assert_eq!(body.matches("base branch is not protected").count(), 1);
                 }
             }
         }
@@ -601,7 +586,7 @@ mod tests {
             minor: vec![],
         };
         let protection = json!({"enforce_admins": {"enabled": true}, "required_status_checks": {"checks": [], "contexts": [], "strict": true}});
-        let mut context = json!({"complete_diff": true, "checks": [], "dependency": false, "files": [{"filename": "src/lib.rs"}], "score": 95.0, "update_type": "version-update:semver-patch", "maintainer_changes": "false"});
+        let mut context = json!({"complete_diff": true, "checks": [], "dependency": false, "files": [{"filename": "src/lib.rs"}], "update_type": "version-update:semver-patch", "maintainer_changes": "false"});
         assert_eq!(
             decision(&review, &context, &[], Some(&protection))
                 .unwrap()
@@ -616,5 +601,45 @@ mod tests {
                 .iter()
                 .any(|blocker| blocker.contains("outside approved"))
         );
+    }
+
+    #[test]
+    fn dependency_approval_requires_trusted_update_metadata_and_protection() -> Result<()> {
+        let review = ModelReview {
+            summary: "Reviewed".to_owned(),
+            risk: Risk::Low,
+            observations: vec![],
+            blockers: vec![],
+            minor: vec![],
+        };
+        let protection = json!({"enforce_admins": {"enabled": true}, "required_status_checks": {"checks": [], "contexts": ["test"], "strict": true}});
+        for (update_type, maintainer_changes, protected, event) in [
+            ("version-update:semver-patch", "false", true, "APPROVE"),
+            ("version-update:semver-minor", "false", true, "APPROVE"),
+            ("version-update:semver-major", "false", true, "COMMENT"),
+            ("unsupported", "unknown", true, "COMMENT"),
+            ("version-update:semver-patch", "unknown", true, "COMMENT"),
+            ("version-update:semver-patch", "false", false, "COMMENT"),
+        ] {
+            let context = json!({
+                "complete_diff": true,
+                "checks": [{"name": "test", "state": "success", "app_id": null}],
+                "dependency": true,
+                "files": [{"filename": "Cargo.lock"}],
+                "update_type": update_type,
+                "maintainer_changes": maintainer_changes,
+            });
+            assert_eq!(
+                decision(
+                    &review,
+                    &context,
+                    &["test".to_owned()],
+                    protected.then_some(&protection),
+                )?
+                .0,
+                event
+            );
+        }
+        Ok(())
     }
 }

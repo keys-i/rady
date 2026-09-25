@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::env;
 #[cfg(test)]
 use std::fs;
@@ -10,20 +9,12 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, anyhow, bail};
 
 use crate::Result;
-use crate::agent;
+use crate::apps;
 use crate::github;
 
 use super::ServeArgs;
 
 const APP_TOKEN_REFRESH: Duration = Duration::from_secs(50 * 60);
-const SERVICE_TOKEN_ENVIRONMENT: &[&str] = &[
-    "RADY_APP_PRIVATE_KEY",
-    "RADY_APP_PRIVATE_KEY_FILE",
-    "RADY_APP_CLIENT_ID",
-    "RADY_APP_ID",
-    "RADY_APP_SLUG",
-];
-
 enum AppPrivateKey {
     Environment,
     File(PathBuf),
@@ -41,104 +32,53 @@ impl AppPrivateKey {
     }
 }
 
-enum ServiceTokenSource {
-    App {
-        issuer: String,
-        private_key: AppPrivateKey,
-        owner: Option<String>,
-    },
-    Command {
-        program: PathBuf,
-        arguments: Vec<String>,
-    },
-    Static,
+struct AppCredentials {
+    issuer: String,
+    private_key: AppPrivateKey,
+    owner: Option<String>,
+    slug: String,
 }
 
 pub(super) struct ServiceTokenProvider {
-    source: ServiceTokenSource,
+    credentials: AppCredentials,
     tokens: Vec<String>,
     refreshed_at: Option<Instant>,
+    scope: github::InstallationTokenScope,
+    installation_seed: usize,
 }
 
 impl ServiceTokenProvider {
-    pub(super) fn new(arguments: &ServeArgs) -> Result<Self> {
-        if let Some(command) = arguments.token_command.as_deref() {
-            let parts = agent::split_command(command)?;
-            let (program, arguments) = parts
-                .split_first()
-                .ok_or_else(|| anyhow!("token command is empty"))?;
-            let program = agent::which(program)
-                .ok_or_else(|| anyhow!("token command executable is not installed"))?;
-            return Ok(Self {
-                source: ServiceTokenSource::Command {
-                    program,
-                    arguments: arguments.to_vec(),
-                },
-                tokens: Vec::new(),
-                refreshed_at: None,
-            });
-        }
-
+    pub(super) fn new(
+        arguments: &ServeArgs,
+        scope: github::InstallationTokenScope,
+    ) -> Result<Self> {
         let private_key_environment = env::var("RADY_APP_PRIVATE_KEY")
             .ok()
             .is_some_and(|value| !value.trim().is_empty());
-        if let Some(source) = app_service_token_source(arguments, private_key_environment)? {
-            return Ok(Self {
-                source,
-                tokens: Vec::new(),
-                refreshed_at: None,
-            });
-        }
-
-        let token = env::var("GH_TOKEN").unwrap_or_default();
-        validate_service_token(&token).with_context(
-            || "provide App credentials with --app-client-id and --app-private-key-file",
-        )?;
         Ok(Self {
-            source: ServiceTokenSource::Static,
-            tokens: vec![token],
+            credentials: app_credentials(arguments, private_key_environment)?,
+            tokens: Vec::new(),
             refreshed_at: None,
+            scope,
+            installation_seed: installation_seed()?,
         })
     }
 
     pub(super) fn tokens(&mut self) -> Result<&[String]> {
-        let refresh = match &self.source {
-            ServiceTokenSource::App { .. } => self
-                .refreshed_at
-                .is_none_or(|refreshed| refreshed.elapsed() >= APP_TOKEN_REFRESH),
-            ServiceTokenSource::Command { .. } => true,
-            ServiceTokenSource::Static => false,
-        };
+        let refresh = self
+            .refreshed_at
+            .is_none_or(|refreshed| refreshed.elapsed() >= APP_TOKEN_REFRESH);
         if refresh {
-            let tokens = match &self.source {
-                ServiceTokenSource::App {
-                    issuer,
-                    private_key,
-                    owner,
-                } => {
-                    let private_key = private_key.read()?;
-                    github::mint_installation_tokens(&private_key, issuer, owner.as_deref())?
-                }
-                ServiceTokenSource::Command { program, arguments } => {
-                    let output = agent::execute(
-                        program.as_os_str(),
-                        arguments,
-                        Path::new("."),
-                        b"",
-                        Duration::from_secs(30),
-                        &service_token_environment(),
-                        false,
-                        None,
-                    )?;
-                    if output.code != 0 {
-                        bail!("token command failed; no GitHub request was made");
-                    }
-                    vec![output.stdout.trim().to_owned()]
-                }
-                ServiceTokenSource::Static => {
-                    bail!("static GitHub token was unexpectedly selected for refresh")
-                }
-            };
+            let private_key = self.credentials.private_key.read()?;
+            let app = github::authenticated_app(&private_key, &self.credentials.issuer)?;
+            apps::require_app_identity(&app, &self.credentials.slug)?;
+            let tokens = github::mint_installation_tokens(
+                &private_key,
+                &self.credentials.issuer,
+                self.credentials.owner.as_deref(),
+                self.scope,
+                self.installation_seed,
+            )?;
             for token in &tokens {
                 validate_service_token(token)?;
             }
@@ -155,10 +95,7 @@ impl ServiceTokenProvider {
     }
 }
 
-fn app_service_token_source(
-    arguments: &ServeArgs,
-    private_key_environment: bool,
-) -> Result<Option<ServiceTokenSource>> {
+fn app_credentials(arguments: &ServeArgs, private_key_environment: bool) -> Result<AppCredentials> {
     let private_key_file = arguments.app_private_key_file.clone();
     if private_key_file.is_some() && private_key_environment {
         bail!("use either --app-private-key-file or RADY_APP_PRIVATE_KEY, not both");
@@ -166,16 +103,7 @@ fn app_service_token_source(
     let issuer = arguments
         .app_client_id
         .as_deref()
-        .filter(|value| !value.is_empty())
-        .or_else(|| {
-            arguments
-                .app_id
-                .as_deref()
-                .filter(|value| !value.is_empty())
-        });
-    if private_key_file.is_none() && !private_key_environment && issuer.is_none() {
-        return Ok(None);
-    }
+        .filter(|value| !value.is_empty());
     let issuer =
         issuer.ok_or_else(|| anyhow!("provide --app-client-id with the GitHub App private key"))?;
     let private_key = match (private_key_file, private_key_environment) {
@@ -186,11 +114,41 @@ fn app_service_token_source(
             bail!("use either --app-private-key-file or RADY_APP_PRIVATE_KEY, not both")
         }
     };
-    Ok(Some(ServiceTokenSource::App {
+    Ok(AppCredentials {
         issuer: issuer.to_owned(),
         private_key,
         owner: arguments.owner.clone(),
-    }))
+        slug: app_slug()?,
+    })
+}
+
+fn app_slug() -> Result<String> {
+    app_slug_from(env::var("RADY_APP_SLUG").ok().as_deref())
+}
+
+fn app_slug_from(value: Option<&str>) -> Result<String> {
+    let slug = value
+        .filter(|value| !value.is_empty())
+        .unwrap_or(apps::RADDUCK_SLUG)
+        .to_owned();
+    apps::validate_slug(&slug)?;
+    if slug != apps::RADDUCK_SLUG {
+        bail!("RADY_APP_SLUG must be {}", apps::RADDUCK_SLUG);
+    }
+    Ok(slug)
+}
+
+fn installation_seed() -> Result<usize> {
+    installation_seed_from(env::var("RADY_INSTALLATION_SEED").ok().as_deref())
+}
+
+fn installation_seed_from(value: Option<&str>) -> Result<usize> {
+    value
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<usize>)
+        .transpose()
+        .map_err(|_| anyhow!("RADY_INSTALLATION_SEED must be a non-negative integer"))
+        .map(Option::unwrap_or_default)
 }
 
 fn validate_service_token(token: &str) -> Result<()> {
@@ -242,25 +200,13 @@ fn read_app_private_key(path: &Path) -> Result<String> {
     Ok(private_key)
 }
 
-fn service_token_environment() -> BTreeMap<String, String> {
-    SERVICE_TOKEN_ENVIRONMENT
-        .iter()
-        .copied()
-        .filter_map(|name| env::var(name).ok().map(|value| (name.to_owned(), value)))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent::Harness;
 
     #[test]
-    fn service_token_boundaries_are_narrow() {
-        assert!(SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_APP_PRIVATE_KEY"));
-        assert!(SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_APP_PRIVATE_KEY_FILE"));
-        assert!(!SERVICE_TOKEN_ENVIRONMENT.contains(&"RADY_GEMINI_API_KEY"));
-        assert!(!SERVICE_TOKEN_ENVIRONMENT.contains(&"GH_TOKEN"));
+    fn service_token_validation_is_bounded() {
         for (token, valid) in [
             ("ghs_valid", true),
             ("", false),
@@ -277,7 +223,7 @@ mod tests {
     fn built_in_app_credentials_are_resolved_as_one_complete_source() {
         for (client_id, key_file, environment_key, expected) in [
             (Some("Iv1.client"), Some("key.pem"), false, 1),
-            (None, None, false, 0),
+            (None, None, false, -1),
             (Some("Iv1.client"), None, false, -1),
             (None, Some("key.pem"), false, -1),
             (Some("Iv1.client"), Some("key.pem"), true, -1),
@@ -288,22 +234,29 @@ mod tests {
                 interval: 30,
                 max_reviews: 4,
                 app_client_id: client_id.map(str::to_owned),
-                app_id: None,
                 app_private_key_file: key_file.map(PathBuf::from),
-                token_command: None,
                 once: true,
             };
-            let source = app_service_token_source(&arguments, environment_key);
+            let source = app_credentials(&arguments, environment_key);
             match expected {
                 1 => assert!(matches!(
                     source,
-                    Ok(Some(ServiceTokenSource::App { owner: Some(owner), .. })) if owner == "keys-i"
+                    Ok(AppCredentials { owner: Some(owner), .. }) if owner == "keys-i"
                 )),
-                0 => assert!(matches!(source, Ok(None))),
                 -1 => assert!(source.is_err()),
                 _ => panic!("invalid test case"),
             }
         }
+    }
+
+    #[test]
+    fn service_identity_inputs_are_strict() -> Result<()> {
+        assert_eq!(app_slug_from(None)?, apps::RADDUCK_SLUG);
+        assert_eq!(installation_seed_from(Some("42"))?, 42);
+        assert!(app_slug_from(Some("rad duck")).is_err());
+        assert!(app_slug_from(Some("another-app")).is_err());
+        assert!(installation_seed_from(Some("nope")).is_err());
+        Ok(())
     }
 
     #[cfg(unix)]
@@ -312,7 +265,7 @@ mod tests {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
 
         let temporary = tempfile::tempdir()?;
-        let key = temporary.path().join("radyybot.pem");
+        let key = temporary.path().join("radduck.pem");
         fs::write(&key, "private key")?;
         fs::set_permissions(&key, fs::Permissions::from_mode(0o600))?;
         assert_eq!(read_app_private_key(&key)?, "private key");

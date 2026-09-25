@@ -12,7 +12,7 @@ use crate::agent;
 
 mod app_auth;
 
-pub(crate) use app_auth::mint_installation_tokens;
+pub(crate) use app_auth::{InstallationTokenScope, authenticated_app, mint_installation_tokens};
 
 #[derive(Clone, Debug)]
 pub struct GitHub {
@@ -99,8 +99,21 @@ impl GitHub {
     }
 
     pub fn pages_after_id(&self, path: &str, after: Option<u64>) -> Result<Vec<Value>> {
+        self.recent_pages_after_id(path, after, 1)
+    }
+
+    /// Return a bounded newest-first window after a cursor, reordered oldest first
+    pub fn recent_pages_after_id(
+        &self,
+        path: &str,
+        after: Option<u64>,
+        pages: usize,
+    ) -> Result<Vec<Value>> {
+        if pages == 0 {
+            return Ok(Vec::new());
+        }
         let mut rows = Vec::new();
-        for page in 1..32 {
+        for page in 1..=pages {
             let separator = if path.contains('?') { '&' } else { '?' };
             let value = self.api(
                 &format!("{path}{separator}per_page=100&page={page}"),
@@ -125,7 +138,24 @@ impl GitHub {
                 return Ok(rows);
             }
         }
-        bail!("GitHub results exceeded the review limit; review manually")
+        rows.reverse();
+        Ok(rows)
+    }
+
+    pub fn page(&self, path: &str, page: u64) -> Result<Vec<Value>> {
+        if page == 0 {
+            bail!("GitHub page numbers start at one");
+        }
+        let separator = if path.contains('?') { '&' } else { '?' };
+        let value = self.api(
+            &format!("{path}{separator}per_page=100&page={page}"),
+            None,
+            "GET",
+        )?;
+        value
+            .as_array()
+            .cloned()
+            .ok_or_else(|| anyhow!("GitHub response was not a list"))
     }
 }
 

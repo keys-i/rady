@@ -14,7 +14,6 @@ use serde_json::{Value, json};
 
 use crate::Result;
 use crate::agent::{self, Harness};
-use crate::apps::Identity;
 use crate::code_command::CodeArgs;
 use crate::delivery;
 use crate::github::GitHub;
@@ -45,7 +44,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Connect this repository to radyybot
+    /// Connect this repository to RadDuck
     #[command(after_help = "Example:\n  rady setup")]
     Setup(SetupArgs),
 
@@ -53,11 +52,8 @@ enum Commands {
     #[command(after_help = "Example:\n  rady code \"fix the parser\" --check test")]
     Code(Box<CodeArgs>),
 
-    /// Configure Rady's Dependabot review and merge gates
-    #[command(
-        alias = "dependasolver",
-        after_help = "Example:\n  rady dependasolve --repo owner/repo --check test --apply"
-    )]
+    /// Configure RadDuck's Dependabot review
+    #[command(after_help = "Example:\n  rady dependasolve --repo owner/repo --check test --apply")]
     Dependasolve(DependSolveArgs),
 
     /// List retained coding runs
@@ -75,10 +71,6 @@ enum Commands {
     /// Apply a verified retained patch to a clean directory
     Apply(ApplyArgs),
 
-    /// Check native harness logins and delivery tools
-    #[command(hide = true)]
-    Doctor(DoctorArgs),
-
     /// Run or check a native agent harness
     #[command(
         disable_help_subcommand = true,
@@ -88,12 +80,6 @@ enum Commands {
         #[command(subcommand)]
         command: AgentCommands,
     },
-
-    #[command(hide = true)]
-    Resolve(ResolveArgs),
-
-    #[command(hide = true)]
-    Review(ReviewArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -104,8 +90,11 @@ enum AgentCommands {
     /// Continue a retained repository conversation
     FollowUp(FollowUpArgs),
 
-    /// Keep mention and pull-request review loops running
+    /// Keep the installed-repository mention loop running
     Serve(crate::service::ServeArgs),
+
+    #[command(hide = true)]
+    Targets(crate::service::ServeArgs),
 
     /// Pass arguments to a native agent harness unchanged
     Run(AgentArgs),
@@ -121,9 +110,6 @@ enum AgentCommands {
 
     #[command(hide = true)]
     Respond(RespondArgs),
-
-    #[command(hide = true)]
-    Sweep(crate::service::SweepArgs),
 
     #[command(hide = true)]
     PrepareRepair(PrepareRepairArgs),
@@ -176,13 +162,7 @@ struct DependSolveArgs {
     #[arg(long, default_value = ".")]
     directory: PathBuf,
 
-    #[arg(long = "app", value_enum, default_value = "rady")]
-    identity: Identity,
-
-    #[arg(long)]
-    new_app: bool,
-
-    /// Refuse to replace an existing generated workflow
+    /// Refuse to replace an existing generated configuration
     #[arg(long)]
     no_overwrite: bool,
 
@@ -431,21 +411,18 @@ where
         Commands::Apply(arguments) => {
             delivery::apply_run(&arguments.run, &arguments.directory, cli.theme, cli.output)
         }
-        Commands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
         Commands::Agent { command } => match command {
             AgentCommands::Ask(arguments) => ask(arguments, cli.theme, cli.output),
             AgentCommands::FollowUp(arguments) => follow_up(arguments, cli.theme, cli.output),
             AgentCommands::Serve(arguments) => crate::service::serve(arguments),
+            AgentCommands::Targets(arguments) => crate::service::targets(arguments),
             AgentCommands::Run(arguments) => native_agent(arguments),
             AgentCommands::Doctor(arguments) => doctor(arguments, cli.theme, cli.output),
             AgentCommands::Resolve(arguments) => resolve(arguments),
             AgentCommands::Review(arguments) => review(arguments),
             AgentCommands::Respond(arguments) => respond(arguments),
-            AgentCommands::Sweep(arguments) => crate::service::sweep(arguments),
             AgentCommands::PrepareRepair(arguments) => prepare_repair(arguments),
         },
-        Commands::Resolve(arguments) => resolve(arguments),
-        Commands::Review(arguments) => review(arguments),
     };
     result.map_err(|error| CliFailure::new(output, &error).into())
 }
@@ -476,15 +453,13 @@ fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<(
     });
     ui.stage("Pinning the trusted Rady version");
     let source = SourceRef::resolve(arguments.solver_ref.as_deref())?;
-    ui.stage("Connecting radyybot and saving the setup");
+    ui.stage("Connecting RadDuck and saving the setup");
     ui.finish_progress();
     let preview = setup::run(
         &repository,
         &source,
         &checks,
         &arguments.directory,
-        Identity::Rady,
-        false,
         !arguments.no_overwrite,
         true,
         arguments.accept_terms,
@@ -504,7 +479,7 @@ fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) -> Result<(
         .join("\n");
     print_markdown(
         &format!(
-            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/rady`\n\nNo secrets were added here. If GitHub opened the radyybot installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
+            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/rady`\n\nNo secrets were added here. If GitHub opened the RadDuck installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
             checks.join(", ")
         ),
         theme,
@@ -549,7 +524,7 @@ fn accept_terms(
 
 fn setup_consent_preview(repository: &str, checks: &[String]) -> String {
     format!(
-        "## Before radyybot connects\n\nFor `{repository}`, Rady will:\n\n- verify your admin access and open the radyybot installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/rady.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/rady`. Rady won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
+        "## Before RadDuck connects\n\nFor `{repository}`, Rady will:\n\n- verify your admin access and open the RadDuck installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/rady.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/rady`. Rady won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
         checks.join("`, `"),
         setup::TERMS_URL,
         setup::PRIVACY_URL,
@@ -643,8 +618,6 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
         &source,
         &arguments.checks,
         &arguments.directory,
-        arguments.identity,
-        arguments.new_app,
         !arguments.no_overwrite,
         arguments.apply,
         arguments.accept_terms,
@@ -677,7 +650,7 @@ fn dependasolve(arguments: DependSolveArgs, theme: Theme, output: OutputMode) ->
             arguments.checks.join(", "),
             files,
             if arguments.apply {
-                "Your agreement is saved. radyybot will check its access, then handle mentions and pending dependency pull requests."
+                "Your agreement is saved. RadDuck will check its access, then handle mentions and pending dependency pull requests."
             } else {
                 "Read `docs/TERMS.md` and `docs/PRIVACY.md`, then run again with `--apply --accept-terms` if you agree."
             }
@@ -766,12 +739,23 @@ fn resolve(arguments: ResolveArgs) -> Result<()> {
         bail!("PR number must be positive");
     }
     let github = GitHub::new(&arguments.repo, &env::var("GH_TOKEN").unwrap_or_default())?;
-    let (pull, dependency) = reviews::resolve(&github, arguments.pr)?;
+    let (pull, dependency, metadata) = reviews::resolve(&github, arguments.pr)?;
     action_output(&[
         ("dependency", dependency.to_string()),
         (
             "head",
             pull["head"]["sha"].as_str().unwrap_or_default().to_owned(),
+        ),
+        (
+            "update_type",
+            metadata
+                .as_ref()
+                .map(|value| value.update_type.clone())
+                .unwrap_or_default(),
+        ),
+        (
+            "maintainer_changes",
+            metadata.map_or_else(|| "unknown".to_owned(), |value| value.maintainer_changes),
         ),
     ])
 }
@@ -797,16 +781,12 @@ fn review(arguments: ReviewArgs) -> Result<()> {
             Some("false") => Some(false),
             _ => None,
         },
-        &env::var("SCORE").unwrap_or_default(),
         &env::var("UPDATE_TYPE").unwrap_or_default(),
         &env::var("MAINTAINER_CHANGES").unwrap_or_default(),
         &env::var("EXPECTED_HEAD").unwrap_or_default(),
         Duration::from_secs(180),
     )?;
-    action_output(&[
-        ("approved", outcome.approved.to_string()),
-        ("enable_auto_merge", outcome.enable_auto_merge.to_string()),
-    ])
+    action_output(&[("approved", outcome.approved.to_string())])
 }
 
 fn respond(arguments: RespondArgs) -> Result<()> {
@@ -876,7 +856,7 @@ mod tests {
             vec!["rady", "resume", "--help"],
             vec!["rady", "apply", "--help"],
             vec![
-                "rady", "--theme", "tide", "--output", "json", "doctor", "--help",
+                "rady", "--theme", "tide", "--output", "json", "agent", "doctor", "--help",
             ],
         ] {
             let result = Cli::try_parse_from(arguments);
@@ -953,7 +933,7 @@ mod tests {
                 "--app-client-id",
                 "Iv1.abc",
                 "--app-private-key-file",
-                "/secure/radyybot.pem",
+                "/secure/radduck.pem",
                 "--once",
             ],
             vec![
@@ -985,7 +965,6 @@ mod tests {
                 "--comment",
                 "2",
             ],
-            vec!["rady", "agent", "sweep", "--owner", "keys-i"],
             vec![
                 "rady",
                 "code",
@@ -1018,7 +997,14 @@ mod tests {
         };
         assert!(arguments.solver_ref.is_none());
         assert!(arguments.no_overwrite);
-        assert_eq!(arguments.identity, Identity::Rady);
+
+        for command in ["doctor", "resolve", "review"] {
+            let result =
+                Cli::try_parse_from(["rady", command, "--repo", "owner/repo", "--pr", "1"]);
+            assert!(result.is_err(), "{command} must live under rady agent");
+        }
+        let result = Cli::try_parse_from(["rady", "agent", "sweep", "--owner", "keys-i"]);
+        assert!(result.is_err(), "sweep is not a public agent command");
     }
 
     #[test]

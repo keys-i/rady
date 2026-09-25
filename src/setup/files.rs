@@ -9,7 +9,6 @@ use tempfile::NamedTempFile;
 
 use super::SourceRef;
 use crate::Result;
-use crate::apps::Identity;
 
 const MAX_CONFIGURATION_BYTES: u64 = 64 * 1024;
 
@@ -40,7 +39,6 @@ pub fn local_files(
     directory: &Path,
     source: &SourceRef,
     required: &[String],
-    _identity: Identity,
     overwrite: bool,
 ) -> Result<BTreeMap<PathBuf, String>> {
     setup_files(directory, source, required, overwrite, None)
@@ -278,7 +276,6 @@ fn nearest_existing(path: &Path) -> Result<&Path> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::apps::Identity;
 
     #[test]
     fn generated_configuration_overwrites_by_default_and_can_be_protected() -> Result<()> {
@@ -288,23 +285,10 @@ mod tests {
         fs::create_dir_all(path.parent().expect("generated file parent"))?;
         fs::write(&path, "existing generated content\n")?;
         assert!(
-            local_files(
-                temporary.path(),
-                &source,
-                &["test".into()],
-                Identity::Rady,
-                false
-            )
-            .is_err(),
+            local_files(temporary.path(), &source, &["test".into()], false).is_err(),
             "--no-overwrite must protect the agreement file"
         );
-        let files = local_files(
-            temporary.path(),
-            &source,
-            &["test".into()],
-            Identity::Rady,
-            true,
-        )?;
+        let files = local_files(temporary.path(), &source, &["test".into()], true)?;
         let generated = files
             .iter()
             .find(|(candidate, _)| candidate.ends_with(".github/rady.json"))
@@ -316,14 +300,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path)?, *generated);
         fs::write(&path, vec![b'x'; MAX_CONFIGURATION_BYTES as usize + 1])?;
         assert!(
-            local_files(
-                temporary.path(),
-                &source,
-                &["test".into()],
-                Identity::Rady,
-                true
-            )
-            .is_err(),
+            local_files(temporary.path(), &source, &["test".into()], true).is_err(),
             "oversized configuration must fail before replacement"
         );
         Ok(())
