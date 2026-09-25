@@ -84,7 +84,7 @@ jobs:
             echo "tag $RELEASE_TAG contains rady $actual, not $expected" >&2
             exit 1
           fi
-          if ! status="$(curl --silent --show-error --location --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/rady/$expected")"; then
+          if ! status="$(curl --silent --show-error --location --user-agent "rady-release/$expected (https://github.com/keys-i/rady)" --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/rady/$expected")"; then
             echo 'could not check crates.io publication state' >&2
             exit 1
           fi
