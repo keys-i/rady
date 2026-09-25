@@ -33,7 +33,7 @@ rady dependasolve --repo owner/repo --check test --apply --accept-terms
 
 The central service polls recent installed work in a bounded, fair rotating window. Mention and discovery tokens are short-lived and installation-scoped. A selected review gets a repository-scoped token with only its required permissions.
 
-Rady verifies the source pin, Dependabot evidence, and chosen checks. Unsupported, grouped, or ambiguous dependency updates receive a comment for manual review. The App has read-only contents access and does not enable, disable, or perform merges. Repository owners retain the final merge decision.
+Rady verifies the source pin, Dependabot evidence, and chosen checks. Unsupported, grouped, or ambiguous dependency updates receive a comment for manual review. The App registration reserves Contents write access for approved coding delivery, while mention and review tokens remain read-only and cannot merge. Repository owners retain the final decision.
 
 ## Removed assumptions
 

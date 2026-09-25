@@ -43,7 +43,7 @@ pub(crate) fn mint_installation_tokens(
         .map(|installation| {
             let jwt = current_app_jwt(&key, issuer)?;
             let endpoint = format!("app/installations/{installation}/access_tokens");
-            let response = app_api(&endpoint, Some(&request), "POST", false, &jwt)?
+            let response = app_api(&endpoint, Some(&request), "POST", false, Some(&jwt))?
                 .ok_or_else(|| anyhow!("GitHub returned no installation token"))?;
             installation_token(&response)
         })
@@ -53,8 +53,13 @@ pub(crate) fn mint_installation_tokens(
 pub(crate) fn authenticated_app(private_key_pem: &str, issuer: &str) -> Result<Value> {
     let key = app_signing_key(private_key_pem)?;
     let jwt = current_app_jwt(&key, issuer)?;
-    app_api("app", None, "GET", false, &jwt)?
+    app_api("app", None, "GET", false, Some(&jwt))?
         .ok_or_else(|| anyhow!("GitHub returned no App identity"))
+}
+
+pub(crate) fn public_app(slug: &str) -> Result<Value> {
+    app_api(&format!("apps/{slug}"), None, "GET", false, None)?
+        .ok_or_else(|| anyhow!("could not verify the existing public App"))
 }
 
 fn service_token_request(scope: InstallationTokenScope) -> Value {
@@ -180,7 +185,7 @@ fn app_installation_ids(
             format!("orgs/{owner}/installation"),
         ] {
             let jwt = current_app_jwt(key, issuer)?;
-            if let Some(response) = app_api(&endpoint, None, "GET", true, &jwt)? {
+            if let Some(response) = app_api(&endpoint, None, "GET", true, Some(&jwt))? {
                 return installation_id(&response).map(|id| vec![id]);
             }
         }
@@ -194,7 +199,7 @@ fn app_installation_ids(
             None,
             "GET",
             false,
-            &jwt,
+            Some(&jwt),
         )?
         .ok_or_else(|| anyhow!("GitHub returned no App installations"))?;
         let complete = append_installation_page(&mut ids, &response)?;
@@ -233,12 +238,12 @@ fn app_api(
     payload: Option<&Value>,
     method: &str,
     missing: bool,
-    jwt: &str,
+    jwt: Option<&str>,
 ) -> Result<Option<Value>> {
     let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect RadDuck"))?;
     let payload = payload.map(serde_json::to_string).transpose()?;
-    let arguments = app_api_arguments(method, endpoint, payload.as_deref());
-    let authorization = app_authorization(jwt);
+    let arguments = app_api_arguments(method, endpoint, payload.as_deref(), jwt.is_some());
+    let authorization = jwt.map(app_authorization).unwrap_or_default();
     let output = agent::execute(
         curl.as_os_str(),
         &arguments,
@@ -260,7 +265,12 @@ fn app_api(
         .transpose()
 }
 
-fn app_api_arguments(method: &str, endpoint: &str, payload: Option<&str>) -> Vec<String> {
+fn app_api_arguments(
+    method: &str,
+    endpoint: &str,
+    payload: Option<&str>,
+    authenticated: bool,
+) -> Vec<String> {
     let mut arguments = vec![
         "--disable".to_owned(),
         "--silent".to_owned(),
@@ -273,14 +283,15 @@ fn app_api_arguments(method: &str, endpoint: &str, payload: Option<&str>) -> Vec
         "--request".to_owned(),
         method.to_owned(),
         "--header".to_owned(),
-        "@-".to_owned(),
-        "--header".to_owned(),
         "Accept: application/vnd.github+json".to_owned(),
         "--header".to_owned(),
         "X-GitHub-Api-Version: 2022-11-28".to_owned(),
         "--header".to_owned(),
         "User-Agent: Rady".to_owned(),
     ];
+    if authenticated {
+        arguments.extend(["--header".to_owned(), "@-".to_owned()]);
+    }
     if let Some(payload) = payload {
         arguments.extend([
             "--header".to_owned(),
@@ -435,12 +446,14 @@ mod tests {
         let mentions = service_token_request(InstallationTokenScope::Mentions);
         assert_eq!(mentions["permissions"]["issues"], "write");
         assert_eq!(mentions["permissions"]["checks"], "read");
+        assert_eq!(mentions["permissions"]["contents"], "read");
         assert_eq!(
             mentions["permissions"].as_object().map(|value| value.len()),
             Some(6)
         );
         let targets = service_token_request(InstallationTokenScope::Targets);
         assert_eq!(targets["permissions"]["issues"], "read");
+        assert_eq!(targets["permissions"]["contents"], "read");
         assert!(targets["permissions"].get("checks").is_none());
         assert_eq!(
             targets["permissions"].as_object().map(|value| value.len()),
@@ -525,7 +538,7 @@ mod tests {
             ("GET", None, false),
             ("POST", Some(r#"{"permissions":{"contents":"read"}}"#), true),
         ] {
-            let arguments = app_api_arguments(method, "app/installations", payload);
+            let arguments = app_api_arguments(method, "app/installations", payload, true);
             assert!(
                 arguments.windows(2).any(|pair| pair == ["--header", "@-"]),
                 "{arguments:?}"
@@ -536,6 +549,17 @@ mod tests {
                 sends_body
             );
         }
+
+        let public_arguments = app_api_arguments("GET", "apps/radduck", None, false);
+        assert!(
+            !public_arguments
+                .windows(2)
+                .any(|pair| pair == ["--header", "@-"])
+        );
+        assert_eq!(
+            public_arguments.last().map(String::as_str),
+            Some("https://api.github.com/apps/radduck")
+        );
 
         for (code, response, missing, expected) in [
             (0, "[]\nRADY_HTTP_STATUS:200", false, Some("[]")),

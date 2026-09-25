@@ -12,7 +12,9 @@ use crate::agent;
 
 mod app_auth;
 
-pub(crate) use app_auth::{InstallationTokenScope, authenticated_app, mint_installation_tokens};
+pub(crate) use app_auth::{
+    InstallationTokenScope, authenticated_app, mint_installation_tokens, public_app,
+};
 
 #[derive(Clone, Debug)]
 pub struct GitHub {

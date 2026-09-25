@@ -58,7 +58,7 @@ Omit `--solver-ref` to use the source setup resolves; provide `keys-i/rady@40_CH
 
 The central `keys-i/rady` service polls a bounded recent window of consented installations. Mentions and discovery use short-lived, installation-scoped tokens with only the permissions needed for that operation. Each selected review receives a repository-scoped token.
 
-Review windows rotate fairly across eligible pull requests. Rady honours the configured source pin, verifies Dependabot evidence, reads the selected CI checks, and leaves unsupported, grouped, or ambiguous updates as a `COMMENT` for human review. The public App has read-only contents access. It does not enable, disable, or perform merges; a person decides whether to merge.
+Review windows rotate fairly across eligible pull requests. Rady honours the configured source pin, verifies Dependabot evidence, reads the selected CI checks, and leaves unsupported, grouped, or ambiguous updates as a `COMMENT` for human review. RadDuck reserves Contents write access for an approved coding path, but mention and review tokens are explicitly narrowed to read-only. They cannot push or merge.
 
 Ask in an issue or pull request:
 

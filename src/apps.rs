@@ -10,7 +10,7 @@ pub const RADDUCK_SLUG: &str = "radduck";
 pub fn permissions() -> Value {
     json!({
         "administration": "read",
-        "contents": "read",
+        "contents": "write",
         "checks": "read",
         "issues": "write",
         "metadata": "read",
@@ -43,7 +43,7 @@ pub fn require_permissions(app: &Value) -> Result<()> {
             .any(|(name, level)| actual.get(name) != Some(level))
     {
         bail!(
-            "the App permissions must exactly be Administration, Checks, Contents, Metadata and Commit statuses read, plus Issues and Pull requests write"
+            "the App permissions must exactly be Administration, Checks, Metadata and Commit statuses read, plus Contents, Issues and Pull requests write"
         );
     }
     Ok(())
@@ -78,10 +78,7 @@ pub fn require_app_identity(app: &Value, slug: &str) -> Result<()> {
 
 pub fn public_app(slug: &str) -> Result<Value> {
     validate_slug(slug)?;
-    let app = github::api(&format!("apps/{slug}"), None, "GET", false)?
-        .ok_or_else(|| anyhow!("could not verify the existing public App"))?;
-    require_public_app(&app)?;
-    Ok(app)
+    github::public_app(slug)
 }
 
 pub fn open_installation(slug: &str, repo: &str) -> Result<()> {
@@ -138,16 +135,16 @@ mod tests {
     }
 
     #[test]
-    fn permissions_are_read_only_except_for_replies_and_reviews() -> Result<()> {
+    fn app_permissions_reserve_write_access_for_approved_delivery() -> Result<()> {
         let mut app = json!({"permissions": permissions(), "owner": {"login": APP_OWNER}, "public": true, "slug": RADDUCK_SLUG});
-        assert_eq!(app["permissions"]["contents"], "read");
+        assert_eq!(app["permissions"]["contents"], "write");
         require_app_owner(&app)?;
         require_permissions(&app)?;
-        app["permissions"]["contents"] = json!("write");
+        app["permissions"]["contents"] = json!("read");
         assert!(require_permissions(&app).is_err());
         app["permissions"]["contents"] = json!("none");
         assert!(require_permissions(&app).is_err());
-        app["permissions"]["contents"] = json!("read");
+        app["permissions"]["contents"] = json!("write");
         app["permissions"]["issues"] = json!("read");
         assert!(require_permissions(&app).is_err());
         app["permissions"]["issues"] = json!("write");

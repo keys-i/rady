@@ -26,7 +26,7 @@ Setup creates a closed, admin-authored receipt and stores its IDs, signer, time,
 
 Only `OWNER`, `MEMBER`, and `COLLABORATOR` actors can invoke `@radduck <prompt>`. Replies are read-only. Issue text, pull-request text, checks, diffs, paths, and model output are untrusted input.
 
-Review windows rotate fairly. Rady honours the configured source pin, verifies Dependabot evidence and selected checks, and leaves unsupported, grouped, or ambiguous updates as comments for manual review. The public App has read-only contents access: Rady cannot push contents and does not enable, disable, or perform merges.
+Review windows rotate fairly. Rady honours the configured source pin, verifies Dependabot evidence and selected checks, and leaves unsupported, grouped, or ambiguous updates as comments for manual review. The App registration reserves Contents write access for approved coding delivery. Mention, discovery, and review tokens are narrowed to read-only contents access and cannot push or merge.
 
 ## Model evidence
 
