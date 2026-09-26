@@ -29,7 +29,7 @@ brew tap keys-i/rady https://github.com/keys-i/rady
 brew install keys-i/rady/koelu
 ```
 
-Coming from Rady or Surkab? Follow the [migration steps](docs/UPGRADING.md).
+Coming from Rady or Pekin? Follow the [migration steps](docs/UPGRADING.md).
 
 Or build a checkout with Rust 1.85+:
 
@@ -101,6 +101,6 @@ App credentials stay only in `keys-i/rady`; they never enter child processes. Me
 
 ## Documentation
 
-[Upgrade to Koelu 0.6.9](docs/UPGRADING.md) from Rady or Surkab. The [changelog](docs/CHANGELOG.md) keeps the earlier names as history, not current setup instructions.
+[Upgrade to Koelu 0.6.9](docs/UPGRADING.md) from Rady or Pekin. The [changelog](docs/CHANGELOG.md) keeps the earlier names as history, not current setup instructions.
 
 For the hosted service, read the current [Terms](docs/TERMS.md) and [Privacy policy](docs/PRIVACY.md). To help with the project, see [Contributing](.github/CONTRIBUTING.md), the [Code of Conduct](.github/CODE_OF_CONDUCT.md), and [Security](.github/SECURITY.md). Maintainers have a [release guide](docs/RELEASING.md). Source code is [MIT licensed](LICENSE).

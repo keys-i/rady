@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased (Koelu 0.6.9)
+
+- Rename the current crate, CLI, GitHub App mention, repository configuration, state paths, central secrets, Homebrew formula, and poster from Pekin to Koelu
+- Keep the duck mascot while taking the new name from the koel; leave Rady and Pekin names in historical release notes
+- Require a new repository agreement under Terms `2026-09-27-t4` and Privacy `2026-09-27-p4` before hosted work resumes
+- Keep the Rady formula as a migration notice; there is no Pekin alias in the current tap, and local run evidence is not moved automatically
+
 ## [0.6.8](https://github.com/keys-i/rady/compare/v0.6.7...v0.6.8) (2026-09-26)
 
 ### Features
@@ -128,7 +135,7 @@
 
 ## Earlier Rady releases (0.1.0–0.5.7)
 
-This is a compact history of the recorded early versions, drawn from their packaged README and upgrade guides. It names milestones visible in those artifacts, not invented patch notes. Missing version numbers are not implied releases; old names and permissions below are historical, not setup advice for Pekin 0.6.8.
+This is a compact history of the recorded early versions, drawn from their packaged README and upgrade guides. It names milestones visible in those artifacts, not invented patch notes. Missing version numbers are not implied releases; old names and permissions below are historical, not setup advice for Koelu.
 
 | Versions | What the packaged documentation establishes |
 | --- | --- |
@@ -140,4 +147,4 @@ This is a compact history of the recorded early versions, drawn from their packa
 | 0.5.2, 0.5.3, 0.5.4 | By 0.5.2, mentions preferred a local Codex login when present and used Gemini-first hosted fallbacks otherwise, with optional xAI routing. The available guides do not assign a separate change to each patch. |
 | 0.5.5, 0.5.6, 0.5.7 | By 0.5.7, the central `keys-i/rady` service held App and model credentials, recorded repository consent, and answered read-only mentions. The available guides do not assign a separate change to each patch. |
 
-For an upgrade from any of these versions, use the [current Pekin guide](UPGRADING.md); do not replay historical setup instructions.
+For an upgrade from any of these versions, use the [current Koelu guide](UPGRADING.md); do not replay historical setup instructions.

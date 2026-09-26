@@ -2,7 +2,7 @@
 
 Effective 27 September 2026 · version `2026-09-27-p4`
 
-This is the current hosted-service policy for Koelu 0.6.9, not a retroactive description of earlier Rady or Surkab releases.
+This is the current hosted-service policy for Koelu 0.6.9, not a retroactive description of earlier Rady or Pekin releases.
 
 This policy covers the hosted Koelu service maintained through `keys-i/rady`. A self-hosted operator is responsible for its own deployment.
 

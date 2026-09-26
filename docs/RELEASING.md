@@ -1,34 +1,19 @@
-# Releasing Pekin
+# Releasing Koelu
 
-`Cargo.toml`, `Cargo.lock`, the release manifest, changelog, and Homebrew formula must name the same release before its tag is created.
+Koelu 0.6.9 is the first version under the new name. `Cargo.toml` and `Cargo.lock` describe that candidate; the release manifest remains at the last released version, 0.6.8, until Release Please advances it. Keep the crate, formula, changelog, and release tag aligned before publication.
 
-## 0.6.8 release notes
+## Cutover checks
 
-0.6.8 completes the Pekin rename and adds hosted approved-write dispatch: an explicit request and same-author approval can create an isolated branch and pull request through the pinned, file-only Gemini harness and a short-lived repository-scoped token. The service never merges. Mention and review requests send bounded evidence; approved hosted edits may send repository files selected by the constrained provider CLI. Terms and Privacy move to `2026-09-26-t3` and `2026-09-26-p3`; connected repositories must install the Pekin App and run setup again before hosted processing resumes.
+- Confirm the public [Koelu App](https://github.com/apps/koelu) is owned by `keys-i`; verify its visibility and exact permissions, and confirm the crate name is available before publishing
+- Move the central repository's existing `RADY_*` credentials to `KOELU_*` names, including `KOELU_RELEASE_TOKEN`, without copying them to installed repositories; the Koelu App ID and slug variables are already set
+- Confirm Terms `2026-09-27-t4` and Privacy `2026-09-27-p4` match the code and setup preview; each installed repository must accept them again
+- Run formatting, Clippy, tests, the locked release build, and a dry-run package check
+- Confirm the Koelu formula points at the eventual `v0.6.9` tag; the old Rady formula stays pinned to its historical tag and names Koelu as the replacement
 
-Release Please normally owns the release pull request, tag, GitHub release, and locked crates.io publication. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow or the maintainer's local Cargo credential store. `PEKIN_RELEASE_TOKEN` must be a fine-grained token limited to `keys-i/rady` with Contents, Issues and Pull requests write access so release pull requests trigger their checks; it must never be copied to an installed repository.
+Release Please normally creates the release pull request, tag, GitHub release, and locked crates.io publication. Add `CARGO_REGISTRY_TOKEN` and `KOELU_RELEASE_TOKEN` to the central `keys-i/rady` repository before publication. The latter needs only the repository permissions required to create a release pull request and trigger its checks.
 
-The one-time 0.6.8 rename also deprecates `Formula/rady.rb` with Pekin named as its replacement and adds a notice-only `rady` crate in `tools/rady-migration`. The old formula stays pinned to 0.6.7; users switch formulas manually. After the `v0.6.8` tag and Pekin publication exist, publish the notice crate from the same tag if crates.io still reports `rady` 0.6.8 absent. It only prints the move notice and must not be mistaken for a Pekin compatibility binary.
+## Recovering publication
 
-## Recovering a crates.io publication
+Use **Actions → Release → Run workflow** only when the matching Koelu GitHub release and immutable `vX.Y.Z` tag already exist. The workflow checks out that tag, verifies its crate name and version, checks crates.io, and publishes only if that exact version is absent. Do not rebuild an older release from current source or move an existing tag.
 
-Use **Actions → Release → Run workflow** only after the matching GitHub release already exists. Enter its exact `vX.Y.Z` tag. The workflow rejects anything else, checks out that tag without credentials, confirms `Cargo.toml` contains the matching `pekin` version, and checks crates.io first. A version already published is a successful no-op; an absent version is published from that immutable checkout. It never publishes `main` during recovery.
-
-## Historical releases
-
-The [changelog](CHANGELOG.md) starts at Rady 0.1.0 and ends at the current Pekin 0.6.8 version. Its early entries summarize the packaged artifacts; they do not certify the state of remote tags or registries.
-
-An unpublished historical crates.io version may be recovered only with the recovery workflow and its existing GitHub release tag. Published crates are immutable; never rebuild an old version from newer source or move an existing tag.
-
-Every immutable crate and tag must come from its own verified, versioned source state. Never rebuild an older version from the current tree or move an existing tag.
-
-## Before merging
-
-- Confirm the public GitHub App uses the `pekin` slug and the central repository has the required `PEKIN_*` secrets and variables
-- Confirm `Cargo.toml` and `Cargo.lock` say the intended next version
-- Confirm the manifest and Homebrew formula name the intended tag
-- Confirm the old Homebrew formula deprecation and notice-only `rady` package are present for the 0.6.8 cutover
-- Run formatting, Clippy, all tests, and the locked release build
-- Confirm release notes and installation documentation name the intended version
-- Confirm the consent constants match the Terms and Privacy versions named in the release notes
-- Confirm `PEKIN_RELEASE_TOKEN` and `CARGO_REGISTRY_TOKEN` are available only to the central release workflow
+The [changelog](CHANGELOG.md) records the Rady and Pekin years under their original names. Existing `rady` and `pekin` crates do not automatically redirect users to Koelu; the Rady Homebrew formula is a migration notice, while the Pekin formula is removed. The [upgrade guide](UPGRADING.md) covers installed CLIs and repository consent.
