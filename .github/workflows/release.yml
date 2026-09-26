@@ -84,7 +84,7 @@ jobs:
             echo "tag $RELEASE_TAG contains koelu $actual, not $expected" >&2
             exit 1
           fi
-          if ! status="$(curl --silent --show-error --location --user-agent "koelu-release/$expected (https://github.com/keys-i/rady)" --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/koelu/$expected")"; then
+          if ! status="$(curl --silent --show-error --location --user-agent "koelu-release/$expected (https://github.com/keys-i/koelu)" --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/koelu/$expected")"; then
             echo 'could not check crates.io publication state' >&2
             exit 1
           fi

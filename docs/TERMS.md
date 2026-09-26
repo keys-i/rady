@@ -4,7 +4,7 @@ Effective 27 September 2026 · version `2026-09-27-t4`
 
 These are the current hosted-service terms for Koelu 0.6.9, not a retroactive agreement for earlier Rady or Pekin releases.
 
-These terms cover the hosted Koelu service maintained through `keys-i/rady`. The MIT licence covers the Koelu source code; a self-hosted copy is not this hosted service.
+These terms cover the hosted Koelu service maintained through `keys-i/koelu`. The MIT licence covers the Koelu source code; a self-hosted copy is not this hosted service.
 
 ## Your agreement
 

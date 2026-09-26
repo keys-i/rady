@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased (Koelu 0.6.10)
+
+- Prepare the repository move to `keys-i/koelu` and accept that name as the trusted solver source
+- Point setup, workflows, package metadata, the Homebrew tap, and current documentation to the new repository
+
 ## [0.6.9](https://github.com/keys-i/rady/compare/v0.6.7...v0.6.9) (2026-09-27)
 
 - Rename the crate, CLI, GitHub App mention, repository configuration, state paths, central secrets, Homebrew formula, and poster to Koelu

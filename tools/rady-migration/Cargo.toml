@@ -6,7 +6,7 @@ rust-version = "1.85"
 description = "Rady has moved to Koelu; install the koelu crate instead"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/keys-i/rady"
+repository = "https://github.com/keys-i/koelu"
 publish = ["crates-io"]
 
 [package.metadata.maintenance]

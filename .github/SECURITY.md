@@ -8,7 +8,7 @@ Use this repository’s **Security** tab → **Report a vulnerability**. Do not 
 
 ## Central boundary
 
-The central host keeps App credentials and provider keys in `keys-i/rady`. Target repositories receive only public `.github/koelu.json`; they never receive a private key, client ID, model key, token, or reusable-workflow secret.
+The central host keeps App credentials and provider keys in `keys-i/koelu`. Target repositories receive only public `.github/koelu.json`; they never receive a private key, client ID, model key, token, or reusable-workflow secret.
 
 The service polls a bounded recent window across consented installations. Mention and discovery operations use short-lived, installation-scoped tokens with only their needed permissions. A selected dependency review receives a repository-scoped token. An approved delivery receives a fresh, short-lived token restricted to its one repository. This is polling, not a webhook endpoint, so work starts on a later cycle.
 
