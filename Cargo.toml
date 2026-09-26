@@ -1,12 +1,12 @@
 [package]
 name = "koelu"
-version = "0.6.9"
+version = "0.6.10"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes, dependency reviews, and local-first agent workflows"
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/keys-i/rady"
+repository = "https://github.com/keys-i/koelu"
 keywords = ["coding-agent", "dependabot", "dependency-review", "cli", "developer-tools"]
 categories = ["command-line-utilities", "development-tools"]
 publish = ["crates-io"]

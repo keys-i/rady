@@ -15,9 +15,9 @@ use consent::{PRIVACY_VERSION, TERMS_VERSION};
 pub use files::{checks, local_files};
 use files::{existing_configuration, refuse_existing_configuration, setup_files, write_setup_file};
 
-const TRUSTED_SOLVER_REPOSITORY: &str = "keys-i/rady";
-pub const TERMS_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/TERMS.md";
-pub const PRIVACY_URL: &str = "https://github.com/keys-i/rady/blob/main/docs/PRIVACY.md";
+const TRUSTED_SOLVER_REPOSITORY: &str = "keys-i/koelu";
+pub const TERMS_URL: &str = "https://github.com/keys-i/koelu/blob/main/docs/TERMS.md";
+pub const PRIVACY_URL: &str = "https://github.com/keys-i/koelu/blob/main/docs/PRIVACY.md";
 
 #[derive(Clone, Debug)]
 pub struct SourceRef {
@@ -36,10 +36,10 @@ impl SourceRef {
     pub fn parse(value: &str) -> Result<Self> {
         let (repository, commit) = value
             .split_once('@')
-            .ok_or_else(|| anyhow!("--solver-ref requires keys-i/rady@40_LOWERCASE_COMMIT_SHA"))?;
+            .ok_or_else(|| anyhow!("--solver-ref requires keys-i/koelu@40_LOWERCASE_COMMIT_SHA"))?;
         github::validate_repository(repository)?;
         if repository != TRUSTED_SOLVER_REPOSITORY || !valid_commit(commit) {
-            bail!("--solver-ref requires keys-i/rady@40_LOWERCASE_COMMIT_SHA");
+            bail!("--solver-ref requires keys-i/koelu@40_LOWERCASE_COMMIT_SHA");
         }
         Ok(Self {
             repository: repository.to_owned(),
@@ -417,11 +417,11 @@ mod tests {
     #[test]
     fn source_reference_table_covers_repository_and_commit_edges() {
         for (value, valid) in [
-            (format!("keys-i/rady@{}", "a".repeat(40)), true),
+            (format!("keys-i/koelu@{}", "a".repeat(40)), true),
             (format!("owner/repo@{}", "a".repeat(40)), false),
-            (format!("keys-i/rady@{}", "A".repeat(40)), false),
-            ("keys-i/rady@short".to_owned(), false),
-            (format!("keys-i/rady@{}", "g".repeat(40)), false),
+            (format!("keys-i/koelu@{}", "A".repeat(40)), false),
+            ("keys-i/koelu@short".to_owned(), false),
+            (format!("keys-i/koelu@{}", "g".repeat(40)), false),
         ] {
             assert_eq!(SourceRef::parse(&value).is_ok(), valid, "{value}");
         }
@@ -434,7 +434,7 @@ mod tests {
             "main",
             &json!({"name": "main", "commit": {"sha": commit}}),
         )?;
-        assert_eq!(source.joined(), format!("keys-i/rady@{commit}"));
+        assert_eq!(source.joined(), format!("keys-i/koelu@{commit}"));
         for (default_branch, response) in [
             ("main", json!({"name": "other", "commit": {"sha": commit}})),
             ("main", json!({"name": "main", "commit": {"sha": "short"}})),
@@ -450,11 +450,11 @@ mod tests {
         }
         for (response, valid) in [
             (
-                json!({"full_name": "keys-i/rady", "default_branch": "main"}),
+                json!({"full_name": "keys-i/koelu", "default_branch": "main"}),
                 true,
             ),
             (
-                json!({"full_name": "keys-i/rady", "default_branch": "feature/a"}),
+                json!({"full_name": "keys-i/koelu", "default_branch": "feature/a"}),
                 true,
             ),
             (
@@ -462,11 +462,11 @@ mod tests {
                 false,
             ),
             (
-                json!({"full_name": "keys-i/rady", "default_branch": ""}),
+                json!({"full_name": "keys-i/koelu", "default_branch": ""}),
                 false,
             ),
             (
-                json!({"full_name": "keys-i/rady", "default_branch": "bad\nbranch"}),
+                json!({"full_name": "keys-i/koelu", "default_branch": "bad\nbranch"}),
                 false,
             ),
             (json!({}), false),
@@ -484,7 +484,7 @@ mod tests {
             temporary.path().join(".github/dependabot.yaml"),
             "version: 2\n",
         )?;
-        let source = SourceRef::parse(&format!("keys-i/rady@{}", "a".repeat(40)))?;
+        let source = SourceRef::parse(&format!("keys-i/koelu@{}", "a".repeat(40)))?;
         let files = local_files(temporary.path(), &source, &["check".to_owned()], true)?;
         assert_eq!(files.len(), 1);
         let configuration = files
@@ -545,7 +545,7 @@ mod tests {
     #[test]
     fn setup_response_parsing_is_bounded_and_unambiguous() {
         for (response, expected) in [
-            (r#"{"nameWithOwner":"keys-i/rady"}"#, Some("keys-i/rady")),
+            (r#"{"nameWithOwner":"keys-i/koelu"}"#, Some("keys-i/koelu")),
             (r#"{"nameWithOwner":"bad"}"#, None),
             (r#"{"nameWithOwner":null}"#, None),
             ("not json", None),
@@ -590,9 +590,9 @@ mod tests {
     #[test]
     fn repository_matching_is_case_insensitive_but_exact() {
         for (left, right, expected) in [
-            ("keys-i/rady", "keys-i/rady", true),
-            ("keys-i/rady", "keys-i/other", false),
-            ("keys-i/rady", "other/koelu", false),
+            ("keys-i/koelu", "keys-i/koelu", true),
+            ("keys-i/koelu", "keys-i/other", false),
+            ("keys-i/koelu", "other/koelu", false),
         ] {
             assert_eq!(same_repository(left, right), expected, "{left} / {right}");
         }

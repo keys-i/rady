@@ -61,7 +61,7 @@ pub(super) fn setup(mut arguments: SetupArgs, theme: Theme, output: OutputMode) 
         .join("\n");
     print_markdown(
         &format!(
-            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/rady`\n\nNo secrets were added here. If GitHub opened the Koelu installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
+            "## Repository is ready\n\n**Repository:** `{repository}`\n\n**Checks:** {}\n\n**Credentials stay in:** `keys-i/koelu`\n\nNo secrets were added here. If GitHub opened the Koelu installation page, finish it, then commit the generated files below. The service will handle mentions and dependency pull requests on its next pass.\n\n### Files\n\n{files}",
             checks.join(", ")
         ),
         theme,
@@ -106,7 +106,7 @@ pub(super) fn accept_terms(
 
 pub(super) fn setup_consent_preview(repository: &str, checks: &[String]) -> String {
     format!(
-        "## Before Koelu connects\n\nFor `{repository}`, Koelu will:\n\n- verify your admin access and open the Koelu installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/koelu.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/rady`. Koelu won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
+        "## Before Koelu connects\n\nFor `{repository}`, Koelu will:\n\n- verify your admin access and open the Koelu installation page if needed\n- use `{}` as CI evidence\n- read relevant issues, pull requests, diffs and check results\n- record your agreement in a closed issue and non-secret `.github/koelu.json` file\n- add Dependabot configuration only when it is missing\n- send bounded evidence to the model providers described in the privacy policy\n\nYour App and model credentials stay in `keys-i/koelu`. Koelu won't copy them here or change branch protection. You still decide what gets merged.\n\n**Terms:** {}\n\n**Privacy:** {}\n",
         checks.join("`, `"),
         setup::TERMS_URL,
         setup::PRIVACY_URL,

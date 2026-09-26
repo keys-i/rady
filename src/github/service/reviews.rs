@@ -184,8 +184,11 @@ mod tests {
     #[test]
     fn solver_source_is_an_explicit_trusted_commit() {
         for (source, valid) in [
-            ("keys-i/rady@0123456789abcdef0123456789abcdef01234567", true),
-            ("keys-i/rady@main", false),
+            (
+                "keys-i/koelu@0123456789abcdef0123456789abcdef01234567",
+                true,
+            ),
+            ("keys-i/koelu@main", false),
             (
                 "other/koelu@0123456789abcdef0123456789abcdef01234567",
                 false,

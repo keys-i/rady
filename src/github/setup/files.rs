@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn generated_configuration_overwrites_by_default_and_can_be_protected() -> Result<()> {
-        let source = SourceRef::parse(&format!("keys-i/rady@{}", "b".repeat(40)))?;
+        let source = SourceRef::parse(&format!("keys-i/koelu@{}", "b".repeat(40)))?;
         let temporary = tempfile::tempdir()?;
         let path = temporary.path().join(".github/koelu.json");
         fs::create_dir_all(path.parent().expect("generated file parent"))?;

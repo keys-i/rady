@@ -1,10 +1,10 @@
 <h1 align="center">Koelu</h1>
 
 <p align="center">
-  <a href="https://github.com/keys-i/rady/actions/workflows/checks.yml"><img alt="Checks" src="https://github.com/keys-i/rady/actions/workflows/checks.yml/badge.svg"></a>
+  <a href="https://github.com/keys-i/koelu/actions/workflows/checks.yml"><img alt="Checks" src="https://github.com/keys-i/koelu/actions/workflows/checks.yml/badge.svg"></a>
   <a href="https://crates.io/crates/koelu"><img alt="Crates.io" src="https://img.shields.io/crates/v/koelu.svg"></a>
   <a href="https://crates.io/crates/koelu"><img alt="Downloads" src="https://img.shields.io/crates/d/koelu.svg"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/keys-i/rady"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/github/license/keys-i/koelu"></a>
 </p>
 
 <p align="center">
@@ -25,8 +25,8 @@ koelu --help
 With Homebrew:
 
 ```sh
-brew tap keys-i/rady https://github.com/keys-i/rady
-brew install keys-i/rady/koelu
+brew tap keys-i/koelu https://github.com/keys-i/koelu
+brew install keys-i/koelu/koelu
 ```
 
 Coming from Rady or Pekin? Follow the [migration steps](docs/UPGRADING.md).
@@ -56,11 +56,11 @@ Setup previews what it will do, writes a small public `.github/koelu.json`, crea
 koelu dependasolve --repo owner/repo --check test --apply --accept-terms
 ```
 
-Omit `--solver-ref` to use the source setup resolves; provide `keys-i/rady@40_CHARACTER_COMMIT_SHA` only when deliberately holding a known release.
+Omit `--solver-ref` to use the source setup resolves; provide `keys-i/koelu@40_CHARACTER_COMMIT_SHA` only when deliberately holding a known release.
 
 ## What happens after setup
 
-The central `keys-i/rady` service polls a bounded recent window of consented installations. Mentions and discovery use short-lived, installation-scoped tokens with only the permissions needed for that operation. Each selected review receives a repository-scoped token.
+The central `keys-i/koelu` service polls a bounded recent window of consented installations. Mentions and discovery use short-lived, installation-scoped tokens with only the permissions needed for that operation. Each selected review receives a repository-scoped token.
 
 Review windows rotate fairly across eligible pull requests. Koelu honours the configured source pin, verifies Dependabot evidence, reads the selected CI checks, and leaves unsupported, grouped, or ambiguous updates as a `COMMENT` for human review. Koelu reserves Contents write access for an approved coding path, but mention and review tokens are explicitly narrowed to read-only. They cannot push or merge.
 
@@ -97,7 +97,7 @@ Use `koelu runs`, `inspect`, `cancel`, `resume`, and `apply` to control retained
 
 ## Safety
 
-App credentials stay only in `keys-i/rady`; they never enter child processes. Mentions and reviews send bounded evidence to their selected provider. An approved hosted edit runs a constrained provider CLI that may read and send repository files it selects for that task; its selected provider API key reaches only that scrubbed client child, never the target repository, prompt, or logs. Hosted editing stops before launch when a repository contains `.gemini`, `.env`, or `GEMINI.md`, because the harness would otherwise load target-controlled configuration. See [Privacy](docs/PRIVACY.md).
+App credentials stay only in `keys-i/koelu`; they never enter child processes. Mentions and reviews send bounded evidence to their selected provider. An approved hosted edit runs a constrained provider CLI that may read and send repository files it selects for that task; its selected provider API key reaches only that scrubbed client child, never the target repository, prompt, or logs. Hosted editing stops before launch when a repository contains `.gemini`, `.env`, or `GEMINI.md`, because the harness would otherwise load target-controlled configuration. See [Privacy](docs/PRIVACY.md).
 
 ## Documentation
 
