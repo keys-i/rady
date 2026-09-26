@@ -8,6 +8,8 @@
 
 Release Please normally owns the release pull request, tag, GitHub release, and locked crates.io publication. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow or the maintainer's local Cargo credential store. `PEKIN_RELEASE_TOKEN` must be a fine-grained token limited to `keys-i/rady` with Contents, Issues and Pull requests write access so release pull requests trigger their checks; it must never be copied to an installed repository.
 
+The one-time 0.6.8 rename also deprecates `Formula/rady.rb` with Pekin named as its replacement and adds a notice-only `rady` crate in `tools/rady-migration`. The old formula stays pinned to 0.6.7; users switch formulas manually. After the `v0.6.8` tag and Pekin publication exist, publish the notice crate from the same tag if crates.io still reports `rady` 0.6.8 absent. It only prints the move notice and must not be mistaken for a Pekin compatibility binary.
+
 ## Recovering a crates.io publication
 
 Use **Actions → Release → Run workflow** only after the matching GitHub release already exists. Enter its exact `vX.Y.Z` tag. The workflow rejects anything else, checks out that tag without credentials, confirms `Cargo.toml` contains the matching `pekin` version, and checks crates.io first. A version already published is a successful no-op; an absent version is published from that immutable checkout. It never publishes `main` during recovery.
@@ -25,6 +27,7 @@ Every immutable crate and tag must come from its own verified, versioned source 
 - Confirm the public GitHub App uses the `pekin` slug and the central repository has the required `PEKIN_*` secrets and variables
 - Confirm `Cargo.toml` and `Cargo.lock` say the intended next version
 - Confirm the manifest and Homebrew formula name the intended tag
+- Confirm the old Homebrew formula deprecation and notice-only `rady` package are present for the 0.6.8 cutover
 - Run formatting, Clippy, all tests, and the locked release build
 - Confirm release notes and installation documentation name the intended version
 - Confirm the consent constants match the Terms and Privacy versions named in the release notes

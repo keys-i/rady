@@ -1,0 +1,14 @@
+[package]
+name = "rady"
+version = "0.6.8"
+edition = "2024"
+rust-version = "1.85"
+description = "Rady has moved to Pekin; install the pekin crate instead"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/keys-i/rady"
+publish = ["crates-io"]
+
+[[bin]]
+name = "rady"
+path = "src/main.rs"

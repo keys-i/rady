@@ -9,6 +9,22 @@ cargo install pekin --locked
 pekin --help
 ```
 
+If you installed the old CLI with Cargo, remove its `rady` binary after installing Pekin:
+
+```sh
+cargo uninstall rady
+```
+
+For an existing Homebrew installation from the `keys-i/rady` tap, replace the old formula:
+
+```sh
+brew update
+brew uninstall keys-i/rady/rady
+brew install keys-i/rady/pekin
+```
+
+The old Homebrew formula warns that Pekin is its replacement; it is not an alias or automatic migration. The final `rady` crate is a notice-only package and does not migrate saved runs or repository configuration.
+
 ## Approved-write dispatch
 
 Pekin can now prepare a branch and pull request for an explicit change request. The person who made the request must approve that exact request from the same issue or pull request:

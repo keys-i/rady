@@ -11,6 +11,7 @@
 ### Breaking changes
 
 * rename the product, crate, binary, App, mention, configuration, environment variables, state paths, and Homebrew formula to Pekin/`pekin` with no command alias
+* publish a notice-only `rady` crate and deprecate the old Homebrew formula with Pekin named as its replacement
 * require connected repositories to install the Pekin App and rerun `pekin setup`
 
 ### Security

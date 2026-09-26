@@ -27,6 +27,8 @@ brew tap keys-i/rady https://github.com/keys-i/rady
 brew install keys-i/rady/pekin
 ```
 
+Upgrading from Rady? The old Cargo package and Homebrew formula now show migration notices; follow the [migration steps](docs/UPGRADING.md).
+
 Or build a checkout with Rust 1.85+:
 
 ```sh
