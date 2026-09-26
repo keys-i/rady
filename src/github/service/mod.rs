@@ -281,34 +281,34 @@ mod tests {
         assert_eq!(failures, ["installation 1: temporary failure"]);
 
         let target = reviews::CentralTarget {
-            repo: "keys-i/rady".to_owned(),
+            repo: "keys-i/koelu".to_owned(),
             owner: "keys-i".to_owned(),
-            name: "rady".to_owned(),
+            name: "koelu".to_owned(),
             private: false,
             number: 7,
             checks: vec!["test".to_owned()],
-            solver_ref: "keys-i/rady@0123456789abcdef0123456789abcdef01234567".to_owned(),
+            solver_ref: "keys-i/koelu@0123456789abcdef0123456789abcdef01234567".to_owned(),
         };
         assert_eq!(
             serde_json::json!({"include": [target]}),
             serde_json::json!({
                 "include": [{
-                    "repo": "keys-i/rady", "owner": "keys-i", "name": "rady",
+                    "repo": "keys-i/koelu", "owner": "keys-i", "name": "koelu",
                     "private": false, "number": 7, "checks": ["test"],
-                    "solver_ref": "keys-i/rady@0123456789abcdef0123456789abcdef01234567"
+                    "solver_ref": "keys-i/koelu@0123456789abcdef0123456789abcdef01234567"
                 }]
             })
         );
 
         let targets = (1..=150)
             .map(|number| reviews::CentralTarget {
-                repo: "keys-i/rady".to_owned(),
+                repo: "keys-i/koelu".to_owned(),
                 owner: "keys-i".to_owned(),
-                name: "rady".to_owned(),
+                name: "koelu".to_owned(),
                 private: false,
                 number,
                 checks: vec!["test".to_owned()],
-                solver_ref: "keys-i/rady@0123456789abcdef0123456789abcdef01234567".to_owned(),
+                solver_ref: "keys-i/koelu@0123456789abcdef0123456789abcdef01234567".to_owned(),
             })
             .collect::<Vec<_>>();
         let choose = |seed| {

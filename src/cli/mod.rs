@@ -152,7 +152,7 @@ struct DependSolveArgs {
     #[arg(long)]
     repo: String,
 
-    /// Optional trusted solver source; defaults to the latest keys-i/rady commit
+    /// Optional trusted solver source; defaults to the latest keys-i/koelu commit
     #[arg(long)]
     solver_ref: Option<String>,
 
@@ -187,7 +187,7 @@ struct SetupArgs {
     #[arg(long, default_value = ".")]
     directory: PathBuf,
 
-    /// Optional trusted solver source; defaults to the latest keys-i/rady commit
+    /// Optional trusted solver source; defaults to the latest keys-i/koelu commit
     #[arg(long)]
     solver_ref: Option<String>,
 

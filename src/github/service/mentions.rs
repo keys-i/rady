@@ -523,21 +523,21 @@ mod tests {
     fn central_sweep_accepts_only_canonical_issue_urls() {
         for (repo, url, expected) in [
             (
-                "keys-i/rady",
-                "https://api.github.com/repos/keys-i/rady/issues/42",
+                "keys-i/koelu",
+                "https://api.github.com/repos/keys-i/koelu/issues/42",
                 Some(42),
             ),
             (
-                "keys-i/rady",
+                "keys-i/koelu",
                 "https://api.github.com/repos/other/koelu/issues/42",
                 None,
             ),
             (
-                "keys-i/rady",
-                "https://api.github.com/repos/keys-i/rady/issues/0",
+                "keys-i/koelu",
+                "https://api.github.com/repos/keys-i/koelu/issues/0",
                 None,
             ),
-            ("keys-i/rady", "not-a-url", None),
+            ("keys-i/koelu", "not-a-url", None),
         ] {
             assert_eq!(comment_issue(repo, url), expected, "{url}");
         }

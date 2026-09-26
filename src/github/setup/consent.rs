@@ -258,16 +258,16 @@ mod tests {
 
     #[test]
     fn consent_receipt_requires_exact_authenticated_evidence() {
-        let repo = "keys-i/rady";
+        let repo = "keys-i/koelu";
         let issue = json!({
             "number": 7,
-            "html_url": "https://github.com/keys-i/rady/issues/7",
+            "html_url": "https://github.com/keys-i/koelu/issues/7",
             "title": CONSENT_ISSUE_TITLE,
             "state": "closed",
         });
         let comment = json!({
             "id": 9,
-            "issue_url": "https://api.github.com/repos/keys-i/rady/issues/7",
+            "issue_url": "https://api.github.com/repos/keys-i/koelu/issues/7",
             "user": {"login": "keys-i"},
             "body": consent_comment(repo),
         });

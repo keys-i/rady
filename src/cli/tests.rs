@@ -201,7 +201,7 @@ fn setup_requires_explicit_consent_for_json_output() {
         "`test` as CI evidence",
         ".github/koelu.json",
         "closed issue",
-        "keys-i/rady",
+        "keys-i/koelu",
         setup::TERMS_URL,
         setup::PRIVACY_URL,
     ] {
