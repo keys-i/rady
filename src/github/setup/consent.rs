@@ -6,9 +6,9 @@ use serde_json::{Value, json};
 use crate::Result;
 use crate::github;
 
-pub(super) const TERMS_VERSION: &str = "2026-09-26-t3";
-pub(super) const PRIVACY_VERSION: &str = "2026-09-26-p3";
-const CONSENT_ISSUE_TITLE: &str = "Pekin service agreement";
+pub(super) const TERMS_VERSION: &str = "2026-09-27-t4";
+pub(super) const PRIVACY_VERSION: &str = "2026-09-27-p4";
+const CONSENT_ISSUE_TITLE: &str = "Koelu service agreement";
 
 pub(super) fn agreement(repo: &str) -> Result<Value> {
     let user = github::api("user", None, "GET", false)?
@@ -40,7 +40,7 @@ struct ConsentReceipt {
 
 fn consent_comment(repo: &str) -> String {
     format!(
-        "Pekin service agreement acceptance\n\nI accept the Pekin Terms of Use ({TERMS_VERSION}) and Privacy Policy ({PRIVACY_VERSION}) for {repo}."
+        "Koelu service agreement acceptance\n\nI accept the Koelu Terms of Use ({TERMS_VERSION}) and Privacy Policy ({PRIVACY_VERSION}) for {repo}."
     )
 }
 
@@ -49,7 +49,7 @@ fn create_consent_receipt(repo: &str, accepted_by: &str) -> Result<ConsentReceip
         &format!("repos/{repo}/issues"),
         Some(&json!({
             "title": CONSENT_ISSUE_TITLE,
-            "body": format!("Accepted by @{accepted_by}. This closed issue is Pekin's service-agreement receipt."),
+            "body": format!("Accepted by @{accepted_by}. This closed issue is Koelu's service-agreement receipt."),
         })),
         "POST",
         false,

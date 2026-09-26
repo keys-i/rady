@@ -12,7 +12,7 @@ fn json_contract_reaches_the_process_boundary() {
                 "code",
                 "change",
                 "--directory",
-                "/.pekin-json-contract-no-project",
+                "/.koelu-json-contract-no-project",
             ]
             .as_slice(),
             1,
@@ -26,10 +26,10 @@ fn json_contract_reaches_the_process_boundary() {
             "required arguments",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_pekin"))
+        let output = Command::new(env!("CARGO_BIN_EXE_koelu"))
             .args(arguments)
             .output()
-            .expect("Pekin must start");
+            .expect("Koelu must start");
         assert_eq!(output.status.code(), Some(exit_code));
         assert!(output.stdout.is_empty());
         let document: Value =
@@ -45,7 +45,7 @@ fn json_contract_reaches_the_process_boundary() {
     }
 
     let directory = tempfile::tempdir().expect("temporary setup directory");
-    let output = Command::new(env!("CARGO_BIN_EXE_pekin"))
+    let output = Command::new(env!("CARGO_BIN_EXE_koelu"))
         .args([
             "--output",
             "json",
@@ -60,7 +60,7 @@ fn json_contract_reaches_the_process_boundary() {
             directory.path().to_str().expect("UTF-8 temporary path"),
         ])
         .output()
-        .expect("Pekin must produce a setup preview");
+        .expect("Koelu must produce a setup preview");
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let document: Value =

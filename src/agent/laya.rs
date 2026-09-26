@@ -59,7 +59,7 @@ pub(super) fn select_tier(evidence: &Value) -> Option<Tier> {
 }
 
 fn decide(state: &str, name: &str, instructions: &str, criteria: Value) -> Option<String> {
-    if env::var("PEKIN_LAYA_ENABLED").as_deref() != Ok("true") {
+    if env::var("KOELU_LAYA_ENABLED").as_deref() != Ok("true") {
         return None;
     }
     let body = serde_json::to_vec(&json!({
@@ -85,7 +85,7 @@ fn call(body: &[u8]) -> Option<Value> {
     let curl = agent::which("curl")?;
     let directory = tempdir().ok()?;
     let mut arguments = curl_arguments();
-    let key = local_api_key(env::var("PEKIN_LAYA_API_KEY").ok())?;
+    let key = local_api_key(env::var("KOELU_LAYA_API_KEY").ok())?;
     let config = directory.path().join("curl.conf");
     let mut file = OpenOptions::new()
         .create_new(true)

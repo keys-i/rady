@@ -13,9 +13,9 @@ use super::{
 };
 
 const MAX_APPROVAL_COMMENT_PAGES: u64 = 31;
-const WRITE_PROPOSAL_MARKER: &str = "<!-- pekin:write-proposal:";
-const WRITE_CLAIM_MARKER: &str = "<!-- pekin:write-claim:";
-const WRITE_RESULT_MARKER: &str = "<!-- pekin:write-result:";
+const WRITE_PROPOSAL_MARKER: &str = "<!-- koelu:write-proposal:";
+const WRITE_CLAIM_MARKER: &str = "<!-- koelu:write-claim:";
+const WRITE_RESULT_MARKER: &str = "<!-- koelu:write-result:";
 
 /// A write request whose approval and source still match GitHub's live state
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -477,7 +477,7 @@ mod tests {
             sha: "a".repeat(40),
         };
         let mut page_one =
-            vec![json!({"user": {"login": "pekin[bot]"}, "body": proposal_marker(&proposal)})];
+            vec![json!({"user": {"login": "koelu[bot]"}, "body": proposal_marker(&proposal)})];
         page_one.extend(
             (1..100).map(|id| json!({"user": {"login": format!("user-{id}")}, "body": "noise"})),
         );
@@ -486,22 +486,22 @@ mod tests {
             .collect::<Vec<_>>();
         let mut evidence = ApprovalEvidence::default();
         for page in [&page_one, &page_two] {
-            extend_approval_evidence(&mut evidence, page, 9, &proposal, "pekin[bot]");
+            extend_approval_evidence(&mut evidence, page, 9, &proposal, "koelu[bot]");
         }
         assert!(evidence.proposal);
         assert!(!evidence.dispatched);
 
         let claimed = vec![json!({
-            "user": {"login": "pekin[bot]"},
+            "user": {"login": "koelu[bot]"},
             "body": claim_marker(9, 1),
         })];
-        extend_approval_evidence(&mut evidence, &claimed, 9, &proposal, "pekin[bot]");
+        extend_approval_evidence(&mut evidence, &claimed, 9, &proposal, "koelu[bot]");
         assert!(evidence.dispatched);
 
         let mut missing = ApprovalEvidence::default();
         let mut stale = proposal.clone();
         stale.sha = "b".repeat(40);
-        extend_approval_evidence(&mut missing, &page_one, 9, &stale, "pekin[bot]");
+        extend_approval_evidence(&mut missing, &page_one, 9, &stale, "koelu[bot]");
         assert!(!missing.proposal);
         assert_eq!(approval_comment_pages(3_100)?, 31);
         assert!(approval_comment_pages(3_101).is_err());
@@ -535,16 +535,16 @@ mod tests {
             (legacy_reply_marker(9), false),
         ] {
             let comments = vec![json!({
-                "user": {"login": "pekin[bot]"},
+                "user": {"login": "koelu[bot]"},
                 "body": body,
             })];
             let mut evidence = ApprovalEvidence::default();
-            extend_approval_evidence(&mut evidence, &comments, 9, &proposal, "pekin[bot]");
+            extend_approval_evidence(&mut evidence, &comments, 9, &proposal, "koelu[bot]");
             assert_eq!(evidence.dispatched, expected);
         }
         for marker in [reply_marker(9), legacy_reply_marker(9)] {
             let comments = vec![json!({
-                "user": {"login": "pekin[bot]"},
+                "user": {"login": "koelu[bot]"},
                 "body": marker,
             })];
             assert!(prior_reply_exists(&comments, 9));

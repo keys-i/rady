@@ -41,7 +41,7 @@ pub(super) fn answer(
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "pekin_answer",
+                "name": "koelu_answer",
                 "strict": true,
                 "schema": schema
             }

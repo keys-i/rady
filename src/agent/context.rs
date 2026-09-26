@@ -119,12 +119,12 @@ impl RepositoryContext {
             }
         }
 
-        let configuration_path = Path::new(".pekin/context.json");
+        let configuration_path = Path::new(".koelu/context.json");
         let configuration = match read_optional(root, configuration_path, &mut total)? {
             Some(source) => {
                 files.push(configuration_path.to_string_lossy().into_owned());
                 serde_json::from_str::<ContextFile>(&source)
-                    .context(".pekin/context.json must use the supported context schema")?
+                    .context(".koelu/context.json must use the supported context schema")?
             }
             None => ContextFile {
                 schema: 1,
@@ -132,12 +132,12 @@ impl RepositoryContext {
             },
         };
         if configuration.schema != 1 {
-            bail!(".pekin/context.json requires schema 1");
+            bail!(".koelu/context.json requires schema 1");
         }
         if configuration.skills.len() > MAX_SKILLS
             || configuration.mcp_servers.len() > MAX_MCP_SERVERS
         {
-            bail!(".pekin/context.json exceeds its guidance or MCP server limit");
+            bail!(".koelu/context.json exceeds its guidance or MCP server limit");
         }
         validate_servers(&configuration.mcp_servers)?;
 
@@ -145,7 +145,7 @@ impl RepositoryContext {
         for skill in &configuration.skills {
             validate_relative_path(skill)?;
             if !seen_skills.insert(skill) {
-                bail!(".pekin/context.json repeats a skill path");
+                bail!(".koelu/context.json repeats a skill path");
             }
             let text = read_required(root, Path::new(skill), &mut total)?;
             files.push(skill.clone());
@@ -365,11 +365,11 @@ mod tests {
         let root = tempdir().unwrap();
         fs::write(root.path().join("AGENTS.md"), "be careful").unwrap();
         fs::write(root.path().join("DESIGN.md"), "be kind").unwrap();
-        fs::create_dir(root.path().join(".pekin")).unwrap();
+        fs::create_dir(root.path().join(".koelu")).unwrap();
         fs::create_dir(root.path().join("skills")).unwrap();
         fs::write(root.path().join("skills/review.md"), "review narrowly").unwrap();
         fs::write(
-            root.path().join(".pekin/context.json"),
+            root.path().join(".koelu/context.json"),
             r#"{"schema":1,"skills":["skills/review.md"],"mcp_servers":{"docs":{"command":"npx","args":["-y","docs-mcp"]}}}"#,
         )
         .unwrap();
@@ -381,7 +381,7 @@ mod tests {
             [
                 "AGENTS.md",
                 "DESIGN.md",
-                ".pekin/context.json",
+                ".koelu/context.json",
                 "skills/review.md"
             ]
         );
@@ -422,8 +422,8 @@ mod tests {
             ),
         ] {
             let root = tempdir().unwrap();
-            fs::create_dir(root.path().join(".pekin")).unwrap();
-            fs::write(root.path().join(".pekin/context.json"), source).unwrap();
+            fs::create_dir(root.path().join(".koelu")).unwrap();
+            fs::write(root.path().join(".koelu/context.json"), source).unwrap();
             assert!(
                 RepositoryContext::load(root.path(), &selected).is_err(),
                 "{name}"
@@ -454,9 +454,9 @@ mod tests {
             ),
         ] {
             let root = tempdir().unwrap();
-            fs::create_dir(root.path().join(".pekin")).unwrap();
+            fs::create_dir(root.path().join(".koelu")).unwrap();
             fs::write(
-                root.path().join(".pekin/context.json"),
+                root.path().join(".koelu/context.json"),
                 json!({"schema": 1, "mcp_servers": {"browser": {"command": command, "args": args}}}).to_string(),
             )
             .unwrap();

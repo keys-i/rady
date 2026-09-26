@@ -25,11 +25,11 @@ use repository_setup::{dependasolve, setup};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "pekin",
+    name = "koelu",
     version,
     about = "Human-first, evidence-gated coding and dependency review",
     disable_help_subcommand = true,
-    after_help = "Examples:\n  pekin setup\n  pekin code \"add structured logging\" --check test\n  pekin agent ask \"why is this test failing?\"\n  pekin dependasolve --repo owner/repo --check test --apply"
+    after_help = "Examples:\n  koelu setup\n  koelu code \"add structured logging\" --check test\n  koelu agent ask \"why is this test failing?\"\n  koelu dependasolve --repo owner/repo --check test --apply"
 )]
 struct Cli {
     #[arg(long, value_enum, global = true, default_value = "auto")]
@@ -44,16 +44,16 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    /// Connect this repository to Pekin
-    #[command(after_help = "Example:\n  pekin setup")]
+    /// Connect this repository to Koelu
+    #[command(after_help = "Example:\n  koelu setup")]
     Setup(SetupArgs),
 
     /// Turn a request into a checked local change or pull request
-    #[command(after_help = "Example:\n  pekin code \"fix the parser\" --check test")]
+    #[command(after_help = "Example:\n  koelu code \"fix the parser\" --check test")]
     Code(Box<CodeArgs>),
 
-    /// Configure Pekin's Dependabot review
-    #[command(after_help = "Example:\n  pekin dependasolve --repo owner/repo --check test --apply")]
+    /// Configure Koelu's Dependabot review
+    #[command(after_help = "Example:\n  koelu dependasolve --repo owner/repo --check test --apply")]
     Dependasolve(DependSolveArgs),
 
     /// List retained coding runs
@@ -74,7 +74,7 @@ enum Commands {
     /// Run or check a native agent harness
     #[command(
         disable_help_subcommand = true,
-        after_help = "Examples:\n  pekin agent ask \"how does this parser work?\"\n  pekin agent follow-up RUN_ID \"where is that called?\"\n  pekin agent serve --app-client-id CLIENT_ID --app-private-key-file KEY.pem\n  pekin agent doctor"
+        after_help = "Examples:\n  koelu agent ask \"how does this parser work?\"\n  koelu agent follow-up RUN_ID \"where is that called?\"\n  koelu agent serve --app-client-id CLIENT_ID --app-private-key-file KEY.pem\n  koelu agent doctor"
     )]
     Agent {
         #[command(subcommand)]
@@ -125,7 +125,7 @@ struct AskArgs {
     #[arg(long)]
     model: Option<String>,
 
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 
     #[arg(long, default_value_t = 300)]
@@ -140,7 +140,7 @@ struct FollowUpArgs {
     #[arg(long)]
     model: Option<String>,
 
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 
     #[arg(long, default_value_t = 300)]
@@ -169,7 +169,7 @@ struct DependSolveArgs {
     #[arg(long)]
     apply: bool,
 
-    /// Accept the current Pekin service terms and privacy policy for this repository
+    /// Accept the current Koelu service terms and privacy policy for this repository
     #[arg(long, requires = "apply")]
     accept_terms: bool,
 }
@@ -195,7 +195,7 @@ struct SetupArgs {
     #[arg(long)]
     no_overwrite: bool,
 
-    /// Accept the current Pekin service terms and privacy policy
+    /// Accept the current Koelu service terms and privacy policy
     #[arg(long)]
     accept_terms: bool,
 }
@@ -217,13 +217,13 @@ struct ApplyArgs {
 
 #[derive(Debug, Args)]
 struct DoctorArgs {
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 }
 
 #[derive(Debug, Args)]
 struct AgentArgs {
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -244,7 +244,7 @@ struct ReviewArgs {
     repo: String,
     #[arg(long)]
     pr: u64,
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 }
 
@@ -256,7 +256,7 @@ struct RespondArgs {
     issue: u64,
     #[arg(long)]
     comment: u64,
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 }
 
@@ -374,11 +374,11 @@ pub fn error_exit(error: anyhow::Error) -> ExitCode {
         if failure.output == OutputMode::Json {
             eprintln!("{}", json_error_document(failure.kind, &failure.message));
         } else {
-            eprintln!("Pekin couldn't finish: {}", failure.message);
+            eprintln!("Koelu couldn't finish: {}", failure.message);
         }
         return ExitCode::from(failure.exit_code);
     } else {
-        eprintln!("Pekin couldn't finish: {error:#}");
+        eprintln!("Koelu couldn't finish: {error:#}");
     }
     ExitCode::FAILURE
 }
@@ -493,7 +493,7 @@ pub(crate) fn print_session(
         }
     }
     markdown.push_str(&format!(
-        "\nContinue with `pekin agent follow-up {} \"…\"`.\n",
+        "\nContinue with `koelu agent follow-up {} \"…\"`.\n",
         answer.id
     ));
     print_markdown(&markdown, theme)

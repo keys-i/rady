@@ -19,7 +19,7 @@ use super::{AgentArgs, DoctorArgs, PrepareRepairArgs, ResolveArgs, RespondArgs, 
 
 pub(super) fn doctor(arguments: DoctorArgs, theme: Theme, output: OutputMode) -> Result<()> {
     let mut ui = Ui::new(theme, output, 3);
-    ui.title("Pekin doctor", "Check what's ready on this machine");
+    ui.title("Koelu doctor", "Check what's ready on this machine");
     let mut rows = Vec::new();
     let mut ready = true;
     for name in ["git", "gh"] {
@@ -64,10 +64,10 @@ pub(super) fn doctor(arguments: DoctorArgs, theme: Theme, output: OutputMode) ->
 pub(super) fn native_agent(arguments: AgentArgs) -> Result<()> {
     let (program, prefix) = if arguments.harness == Harness::Command {
         let configured =
-            agent::split_command(&env::var("PEKIN_AGENT_COMMAND").unwrap_or_default())?;
+            agent::split_command(&env::var("KOELU_AGENT_COMMAND").unwrap_or_default())?;
         let (program, prefix) = configured
             .split_first()
-            .ok_or_else(|| anyhow!("set PEKIN_AGENT_COMMAND"))?;
+            .ok_or_else(|| anyhow!("set KOELU_AGENT_COMMAND"))?;
         (
             program.clone(),
             prefix.iter().map(OsString::from).collect::<Vec<_>>(),
@@ -128,13 +128,13 @@ pub(super) fn review(arguments: ReviewArgs) -> Result<()> {
         &github,
         arguments.pr,
         &required,
-        env::var("PEKIN_MODEL")
+        env::var("KOELU_MODEL")
             .ok()
             .filter(|value| !value.is_empty())
             .as_deref(),
         &env::var("APP_SLUG").unwrap_or_default(),
         arguments.harness,
-        match env::var("PEKIN_REPOSITORY_PRIVATE").ok().as_deref() {
+        match env::var("KOELU_REPOSITORY_PRIVATE").ok().as_deref() {
             Some("true") => Some(true),
             Some("false") => Some(false),
             _ => None,
@@ -156,7 +156,7 @@ pub(super) fn respond(arguments: RespondArgs) -> Result<()> {
         &github,
         arguments.issue,
         arguments.comment,
-        env::var("PEKIN_MODEL")
+        env::var("KOELU_MODEL")
             .ok()
             .filter(|value| !value.is_empty())
             .as_deref(),

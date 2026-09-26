@@ -47,7 +47,7 @@ pub fn review_pr(
     if !slug.is_match(bot_slug)
         || required
             .iter()
-            .any(|name| name.trim().is_empty() || name.starts_with("Pekin dependasolve"))
+            .any(|name| name.trim().is_empty() || name.starts_with("Koelu dependasolve"))
     {
         bail!("selected App slug and valid external required checks are required");
     }
@@ -104,7 +104,7 @@ pub fn review_pr(
         model,
         INSTRUCTIONS
     ]))?);
-    let marker = format!("<!-- pekin-review-{} -->", hex(&fingerprint[..12]));
+    let marker = format!("<!-- koelu-review-{} -->", hex(&fingerprint[..12]));
     let reviews = github.pages(&format!("pulls/{number}/reviews"), None)?;
     let login = format!("{bot_slug}[bot]");
     let own: Vec<_> = reviews

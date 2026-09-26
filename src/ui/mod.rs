@@ -82,7 +82,7 @@ impl Ui {
         );
         let motion = terminal_motion(
             styled,
-            std::env::var_os("PEKIN_REDUCED_MOTION").is_some(),
+            std::env::var_os("KOELU_REDUCED_MOTION").is_some(),
             std::env::var_os("CI").is_some(),
         );
         Self {
@@ -120,12 +120,12 @@ impl Ui {
             .unwrap_or_else(|error| error.into_inner());
         if self.styled {
             eprintln!(
-                "\x1b[1;{}m🦆 PEKIN\x1b[0m  \x1b[2mduck on watch\x1b[0m  {title}",
+                "\x1b[1;{}m🦆 KOELU\x1b[0m  \x1b[2mduck on watch\x1b[0m  {title}",
                 self.accent()
             );
             eprintln!("\x1b[2m{subtitle}\x1b[0m\n");
         } else {
-            eprintln!("Pekin / duck on watch\n{title}\n{subtitle}\n");
+            eprintln!("Koelu / duck on watch\n{title}\n{subtitle}\n");
         }
     }
 
@@ -252,7 +252,7 @@ impl Ui {
         let (stop, stopped) = mpsc::channel();
         let terminal = Arc::clone(&self.terminal);
         let Ok(worker) = thread::Builder::new()
-            .name("pekin-progress".into())
+            .name("koelu-progress".into())
             .spawn(move || {
                 let length = stage.label.chars().count();
                 for visible in 0..length {

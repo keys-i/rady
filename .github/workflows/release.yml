@@ -27,17 +27,17 @@ jobs:
     steps:
       - name: Require the central release token
         env:
-          PEKIN_RELEASE_TOKEN: ${{ secrets.PEKIN_RELEASE_TOKEN }}
+          KOELU_RELEASE_TOKEN: ${{ secrets.KOELU_RELEASE_TOKEN }}
         run: |
-          if [[ -z "$PEKIN_RELEASE_TOKEN" ]]; then
-            echo 'PEKIN_RELEASE_TOKEN is missing from the central repository' >&2
+          if [[ -z "$KOELU_RELEASE_TOKEN" ]]; then
+            echo 'KOELU_RELEASE_TOKEN is missing from the central repository' >&2
             exit 1
           fi
       - name: Prepare release PR or publish merged release
         id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.PEKIN_RELEASE_TOKEN }}
+          token: ${{ secrets.KOELU_RELEASE_TOKEN }}
           target-branch: main
           config-file: tools/config/release-please.json
           manifest-file: tools/config/release-manifest.json
@@ -56,11 +56,11 @@ jobs:
         id: release
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.PEKIN_RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.KOELU_RELEASE_TOKEN }}
         run: |
           set -euo pipefail
           if [[ -z "$GH_TOKEN" ]]; then
-            echo 'PEKIN_RELEASE_TOKEN is missing from the central repository' >&2
+            echo 'KOELU_RELEASE_TOKEN is missing from the central repository' >&2
             exit 1
           fi
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -79,12 +79,12 @@ jobs:
         run: |
           set -euo pipefail
           expected="${RELEASE_TAG#v}"
-          actual="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "pekin") | .version')"
+          actual="$(cargo metadata --no-deps --format-version 1 | jq -er '.packages[] | select(.name == "koelu") | .version')"
           if [[ "$actual" != "$expected" ]]; then
-            echo "tag $RELEASE_TAG contains pekin $actual, not $expected" >&2
+            echo "tag $RELEASE_TAG contains koelu $actual, not $expected" >&2
             exit 1
           fi
-          if ! status="$(curl --silent --show-error --location --user-agent "pekin-release/$expected (https://github.com/keys-i/rady)" --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/pekin/$expected")"; then
+          if ! status="$(curl --silent --show-error --location --user-agent "koelu-release/$expected (https://github.com/keys-i/rady)" --output /dev/null --write-out '%{http_code}' "https://crates.io/api/v1/crates/koelu/$expected")"; then
             echo 'could not check crates.io publication state' >&2
             exit 1
           fi

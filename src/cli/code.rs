@@ -38,7 +38,7 @@ pub(crate) struct CodeArgs {
     #[arg(long, value_enum)]
     orchestrator_harness: Option<Harness>,
 
-    #[arg(long, value_enum, env = "PEKIN_HARNESS", default_value = "codex")]
+    #[arg(long, value_enum, env = "KOELU_HARNESS", default_value = "codex")]
     harness: Harness,
 
     #[arg(long, default_value_t = 1)]
@@ -92,7 +92,7 @@ pub(crate) struct CodeArgs {
     #[arg(long, default_value_t = 1800)]
     timeout: u64,
 
-    /// Enable a named MCP server from .pekin/context.json for write tasks
+    /// Enable a named MCP server from .koelu/context.json for write tasks
     #[arg(long = "mcp", action = clap::ArgAction::Append)]
     mcp_servers: Vec<String>,
 

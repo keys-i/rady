@@ -12,8 +12,8 @@ use crate::agent;
 
 pub(super) const MAX_RESPONSE_BYTES: usize = 24_000;
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(20);
-const HTTP_STATUS_MARKER: &str = "\nPEKIN_HTTP_STATUS:";
-const RETRY_AFTER_MARKER: &str = "\nPEKIN_RETRY_AFTER:";
+const HTTP_STATUS_MARKER: &str = "\nKOELU_HTTP_STATUS:";
+const RETRY_AFTER_MARKER: &str = "\nKOELU_RETRY_AFTER:";
 
 pub(super) fn get(
     url: &str,
@@ -217,25 +217,25 @@ mod tests {
         for (code, output, expected_kind, expected_text) in [
             (
                 0,
-                "{\"answer\":\"ready\"}\nPEKIN_HTTP_STATUS:200\nPEKIN_RETRY_AFTER:",
+                "{\"answer\":\"ready\"}\nKOELU_HTTP_STATUS:200\nKOELU_RETRY_AFTER:",
                 None,
                 None,
             ),
             (
                 22,
-                "secret provider body\nPEKIN_HTTP_STATUS:402\nPEKIN_RETRY_AFTER:",
+                "secret provider body\nKOELU_HTTP_STATUS:402\nKOELU_RETRY_AFTER:",
                 Some(FailureKind::Payment),
                 Some("provider reported payment or entitlement required (HTTP 402)"),
             ),
             (
                 22,
-                "secret provider body\nPEKIN_HTTP_STATUS:429\nPEKIN_RETRY_AFTER:30",
+                "secret provider body\nKOELU_HTTP_STATUS:429\nKOELU_RETRY_AFTER:30",
                 Some(FailureKind::RateLimit),
                 Some("provider rate limit reached (HTTP 429)"),
             ),
             (
                 28,
-                "\nPEKIN_HTTP_STATUS:000\nPEKIN_RETRY_AFTER:",
+                "\nKOELU_HTTP_STATUS:000\nKOELU_RETRY_AFTER:",
                 Some(FailureKind::Transient),
                 Some("provider request failed (transport 28)"),
             ),
@@ -252,7 +252,7 @@ mod tests {
             }
         }
         let limited =
-            parse_response(22, "\nPEKIN_HTTP_STATUS:429\nPEKIN_RETRY_AFTER:45").unwrap_err();
+            parse_response(22, "\nKOELU_HTTP_STATUS:429\nKOELU_RETRY_AFTER:45").unwrap_err();
         assert_eq!(limited.retry_after, Some(Duration::from_secs(45)));
     }
 
@@ -261,7 +261,7 @@ mod tests {
         for (method, body, expected_body) in [("GET", false, false), ("POST", true, true)] {
             let arguments = provider_arguments(
                 method,
-                Path::new("/tmp/pekin-curl.conf"),
+                Path::new("/tmp/koelu-curl.conf"),
                 "https://provider.example/v1/models",
                 body,
             );

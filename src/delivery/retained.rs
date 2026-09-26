@@ -141,7 +141,7 @@ pub(super) struct Run {
 impl Run {
     pub(super) fn persist(&self) -> Result<()> {
         self.stored.write_json("run.json", &self.state)?;
-        let name = self.state["stage"].as_str().unwrap_or("Pekin run");
+        let name = self.state["stage"].as_str().unwrap_or("Koelu run");
         write_report(
             &self.scratch.join("run.html"),
             name,
@@ -516,7 +516,7 @@ fn report_markdown(state: &Value, include_diff: bool) -> String {
     }
     if cancellation_pending(state) {
         text.push_str(
-            "## Stop requested\n\nPekin will stop after the current safe step. Saved details remain available.\n\n",
+            "## Stop requested\n\nKoelu will stop after the current safe step. Saved details remain available.\n\n",
         );
     }
     if let Some(task) = state["task"].as_str() {
@@ -685,7 +685,7 @@ mod tests {
         let state = json!({
             "task": "Fix [unsafe](javascript:alert(1)) <script> $x$ ^power^",
             "error": "Stopped *safely*", "changed_files": ["src/lib.rs"],
-            "publication": {"status": "branch pushed", "repository": "owner/repo", "branch": "pekin/test"},
+            "publication": {"status": "branch pushed", "repository": "owner/repo", "branch": "koelu/test"},
             "retention_error": "patch unavailable", "diff_preview": "+safe",
             "checks": [{"command": "check", "exit_code": 0, "log": "/tmp/check.log"}]
         });

@@ -57,23 +57,23 @@ impl Provider {
 
     const fn key_name(self) -> &'static str {
         match self {
-            Self::Gemini => "PEKIN_GEMINI_API_KEY",
-            Self::Groq => "PEKIN_GROQ_API_KEY",
-            Self::Cloudflare => "PEKIN_CLOUDFLARE_API_TOKEN",
-            Self::Cerebras => "PEKIN_CEREBRAS_API_KEY",
-            Self::OpenRouter => "PEKIN_OPENROUTER_API_KEY",
-            Self::Xai => "PEKIN_XAI_API_KEY",
+            Self::Gemini => "KOELU_GEMINI_API_KEY",
+            Self::Groq => "KOELU_GROQ_API_KEY",
+            Self::Cloudflare => "KOELU_CLOUDFLARE_API_TOKEN",
+            Self::Cerebras => "KOELU_CEREBRAS_API_KEY",
+            Self::OpenRouter => "KOELU_OPENROUTER_API_KEY",
+            Self::Xai => "KOELU_XAI_API_KEY",
         }
     }
 
     const fn private_opt_in(self) -> &'static str {
         match self {
-            Self::Gemini => "PEKIN_GEMINI_PRIVATE_OK",
-            Self::Groq => "PEKIN_GROQ_PRIVATE_OK",
-            Self::Cloudflare => "PEKIN_CLOUDFLARE_PRIVATE_OK",
-            Self::Cerebras => "PEKIN_CEREBRAS_PRIVATE_OK",
-            Self::OpenRouter => "PEKIN_OPENROUTER_PRIVATE_OK",
-            Self::Xai => "PEKIN_XAI_PRIVATE_OK",
+            Self::Gemini => "KOELU_GEMINI_PRIVATE_OK",
+            Self::Groq => "KOELU_GROQ_PRIVATE_OK",
+            Self::Cloudflare => "KOELU_CLOUDFLARE_PRIVATE_OK",
+            Self::Cerebras => "KOELU_CEREBRAS_PRIVATE_OK",
+            Self::OpenRouter => "KOELU_OPENROUTER_PRIVATE_OK",
+            Self::Xai => "KOELU_XAI_PRIVATE_OK",
         }
     }
 }
@@ -395,11 +395,11 @@ fn credentials(provider: Provider) -> std::result::Result<Option<Credentials>, P
         ));
     }
     let account_id = if provider == Provider::Cloudflare {
-        let value = env::var("PEKIN_CLOUDFLARE_ACCOUNT_ID").unwrap_or_default();
+        let value = env::var("KOELU_CLOUDFLARE_ACCOUNT_ID").unwrap_or_default();
         if !valid_account_id(&value) {
             return Err(ProviderFailure::new(
                 FailureKind::Authentication,
-                "PEKIN_CLOUDFLARE_ACCOUNT_ID is missing or invalid",
+                "KOELU_CLOUDFLARE_ACCOUNT_ID is missing or invalid",
             ));
         }
         Some(value)
@@ -797,8 +797,8 @@ mod tests {
         assert!(valid_model_identifier("@cf/openai/gpt-oss-120b"));
         assert!(valid_model_identifier("meta-llama/llama-4:free"));
         assert!(!valid_model_identifier("https://provider.invalid/model"));
-        assert!(valid_slug("pekin"));
-        assert!(!valid_slug("pekin/model"));
+        assert!(valid_slug("koelu"));
+        assert!(!valid_slug("koelu/model"));
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::Result;
 
 use super::{ReportState, Theme};
 
-const PEKIN_DUCK_PNG: &[u8] = include_bytes!("../../assets/pekin-app-duck.png");
+const KOELU_DUCK_PNG: &[u8] = include_bytes!("../../assets/koelu-app-duck.png");
 
 pub fn write_report(
     path: &Path,
@@ -51,7 +51,7 @@ pub fn write_report(
             r#"role="status" aria-label="Run stopped""#,
         ),
     };
-    let mascot = format!("data:image/png;base64,{}", base64(PEKIN_DUCK_PNG));
+    let mascot = format!("data:image/png;base64,{}", base64(KOELU_DUCK_PNG));
     let document = REPORT_TEMPLATE
         .replace("{{theme}}", theme_name)
         .replace("{{title}}", &title)
@@ -247,7 +247,7 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
-  <title>{{title}} | Pekin</title>
+  <title>{{title}} | Koelu</title>
   <style>
     :root { color-scheme:light; --canvas:#eef3ec; --paper:#fbfcf8; --ink:#17241d; --muted:#526158; --edge:#cad5cc; --accent:#286b4f; --accent-strong:#174b36; --accent-wash:#dbe9de; --code-bg:#121b18; --code-ink:#c9f4da; --warning:#9b4936; --shadow:#1830251c; --sheet-radius:9px; --control-radius:5px; --ease:cubic-bezier(.16,1,.3,1); --mono:"SFMono-Regular","Cascadia Code",Menlo,Consolas,monospace; }
     html[data-theme="dawn"],html:has(input[value="dawn"]:checked) { color-scheme:light; --canvas:#f1eee7; --paper:#fcfaf5; --ink:#292822; --muted:#68655c; --edge:#d7d1c6; --accent:#9f4e32; --accent-strong:#74331f; --accent-wash:#efded4; --code-bg:#24231e; --code-ink:#f5d5a5; --warning:#9f3d31; --shadow:#39291d1b; }
@@ -335,8 +335,8 @@ const REPORT_TEMPLATE: &str = r#"<!doctype html>
   <main class="report">
     <header class="rail">
       <div class="identity">
-        <span class="duck-frame"><img class="duck" src="{{mascot}}" width="489" height="512" alt="Pekin duck inspecting a keyboard"></span>
-        <span><span class="product">Pekin</span><span class="artifact">Duck on watch · evidence report</span></span>
+        <span class="duck-frame"><img class="duck" src="{{mascot}}" width="489" height="512" alt="Koelu duck inspecting a keyboard"></span>
+        <span><span class="product">Koelu</span><span class="artifact">Duck on watch · evidence report</span></span>
       </div>
       <div class="stage">
         <h1>{{title}}</h1>

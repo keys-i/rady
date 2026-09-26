@@ -75,7 +75,7 @@ impl Usage {
             return Ok(());
         };
         if self.missing {
-            bail!("token usage is unavailable, so Pekin cannot enforce the budget");
+            bail!("token usage is unavailable, so Koelu cannot enforce the budget");
         }
         if self.total_tokens() >= maximum {
             bail!("token budget is exhausted");
@@ -98,7 +98,7 @@ impl Usage {
             values: values.unwrap_or_default(),
         });
         if !known && self.max_tokens.is_some() {
-            bail!("token usage is unavailable, so Pekin cannot enforce the budget");
+            bail!("token usage is unavailable, so Koelu cannot enforce the budget");
         }
         if self
             .max_tokens

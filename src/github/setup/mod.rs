@@ -153,24 +153,24 @@ pub fn install(
         bail!("read {TERMS_URL} and {PRIVACY_URL}, then rerun with --accept-terms if you agree");
     }
     if !overwrite && existing.is_some() && !reuse_agreement {
-        bail!("refusing to overwrite existing .github/pekin.json");
+        bail!("refusing to overwrite existing .github/koelu.json");
     }
     let agreement = if reuse_agreement {
         existing
             .as_ref()
             .and_then(|configuration| configuration.get("agreement"))
             .cloned()
-            .ok_or_else(|| anyhow!("existing Pekin agreement was missing"))?
+            .ok_or_else(|| anyhow!("existing Koelu agreement was missing"))?
     } else {
-        let app = apps::public_app(apps::PEKIN_SLUG)?;
+        let app = apps::public_app(apps::KOELU_SLUG)?;
         apps::require_app_owner(&app)?;
         apps::require_permissions(&app)?;
-        apps::open_installation(apps::PEKIN_SLUG, repo)?;
+        apps::open_installation(apps::KOELU_SLUG, repo)?;
         consent::agreement(repo)?
     };
     let files = setup_files(directory, source, required, overwrite, Some(&agreement))?;
     for (path, content) in files {
-        let replace = overwrite && path.ends_with(".github/pekin.json");
+        let replace = overwrite && path.ends_with(".github/koelu.json");
         write_setup_file(&path, content.as_bytes(), replace)?;
     }
     Ok(())
@@ -386,7 +386,7 @@ pub fn run(
         "agreement_required": !accept_terms,
         "app_public": true,
         "app_permissions": apps::permissions(),
-        "app": apps::PEKIN_SLUG,
+        "app": apps::KOELU_SLUG,
         "overwrite": overwrite,
         "apply": apply,
     });
@@ -458,7 +458,7 @@ mod tests {
                 true,
             ),
             (
-                json!({"full_name": "other/pekin", "default_branch": "main"}),
+                json!({"full_name": "other/koelu", "default_branch": "main"}),
                 false,
             ),
             (
@@ -489,9 +489,9 @@ mod tests {
         assert_eq!(files.len(), 1);
         let configuration = files
             .iter()
-            .find(|(path, _)| path.ends_with(".github/pekin.json"))
+            .find(|(path, _)| path.ends_with(".github/koelu.json"))
             .map(|(_, content)| serde_json::from_str::<Value>(content))
-            .expect("generated Pekin configuration")?;
+            .expect("generated Koelu configuration")?;
         assert_eq!(configuration["schema"], 1);
         assert_eq!(configuration["source"], source.joined());
         assert_eq!(configuration["checks"], json!(["check"]));
@@ -504,37 +504,37 @@ mod tests {
 
         let orchestrator = include_str!("../../../.github/workflows/orchestrate.yml");
         for secret in [
-            "PEKIN_APP_PRIVATE_KEY",
-            "PEKIN_APP_CLIENT_ID",
-            "PEKIN_APP_SLUG",
-            "PEKIN_GEMINI_API_KEY",
-            "PEKIN_CEREBRAS_API_KEY",
-            "PEKIN_XAI_API_KEY",
-            "PEKIN_GROQ_API_KEY",
-            "PEKIN_CLOUDFLARE_API_TOKEN",
-            "PEKIN_CLOUDFLARE_ACCOUNT_ID",
-            "PEKIN_OPENROUTER_API_KEY",
-            "PEKIN_GEMINI_PRIVATE_OK",
-            "PEKIN_CEREBRAS_PRIVATE_OK",
-            "PEKIN_XAI_PRIVATE_OK",
-            "PEKIN_GROQ_PRIVATE_OK",
-            "PEKIN_CLOUDFLARE_PRIVATE_OK",
-            "PEKIN_OPENROUTER_PRIVATE_OK",
+            "KOELU_APP_PRIVATE_KEY",
+            "KOELU_APP_CLIENT_ID",
+            "KOELU_APP_SLUG",
+            "KOELU_GEMINI_API_KEY",
+            "KOELU_CEREBRAS_API_KEY",
+            "KOELU_XAI_API_KEY",
+            "KOELU_GROQ_API_KEY",
+            "KOELU_CLOUDFLARE_API_TOKEN",
+            "KOELU_CLOUDFLARE_ACCOUNT_ID",
+            "KOELU_OPENROUTER_API_KEY",
+            "KOELU_GEMINI_PRIVATE_OK",
+            "KOELU_CEREBRAS_PRIVATE_OK",
+            "KOELU_XAI_PRIVATE_OK",
+            "KOELU_GROQ_PRIVATE_OK",
+            "KOELU_CLOUDFLARE_PRIVATE_OK",
+            "KOELU_OPENROUTER_PRIVATE_OK",
         ] {
             assert!(orchestrator.contains(secret));
             assert!(!serde_json::to_string(&configuration)?.contains(secret));
         }
-        for local in ["PEKIN_LAYA_ENABLED", "PEKIN_LAYA_API_KEY"] {
+        for local in ["KOELU_LAYA_ENABLED", "KOELU_LAYA_API_KEY"] {
             assert!(!serde_json::to_string(&configuration)?.contains(local));
             assert!(!orchestrator.contains(local));
         }
-        assert!(orchestrator.contains("pekin agent serve --once"));
-        assert!(orchestrator.contains("pekin agent targets --max-reviews 4"));
+        assert!(orchestrator.contains("koelu agent serve --once"));
+        assert!(orchestrator.contains("koelu agent targets --max-reviews 4"));
         assert!(orchestrator.contains("uses: ./.github/workflows/solve.yml"));
         assert!(orchestrator.contains("max-parallel: 4"));
         assert!(!orchestrator.contains("--owner"));
-        assert!(!orchestrator.contains("target/release/pekin agent sweep"));
-        assert!(!orchestrator.contains("target/release/pekin agent respond"));
+        assert!(!orchestrator.contains("target/release/koelu agent sweep"));
+        assert!(!orchestrator.contains("target/release/koelu agent respond"));
         assert!(!orchestrator.contains("runs-on: self-hosted"));
         assert!(!orchestrator.contains("actions/cache@"));
         assert!(orchestrator.contains("permissions:\n  contents: read"));
@@ -592,7 +592,7 @@ mod tests {
         for (left, right, expected) in [
             ("keys-i/rady", "keys-i/rady", true),
             ("keys-i/rady", "keys-i/other", false),
-            ("keys-i/rady", "other/pekin", false),
+            ("keys-i/rady", "other/koelu", false),
         ] {
             assert_eq!(same_repository(left, right), expected, "{left} / {right}");
         }

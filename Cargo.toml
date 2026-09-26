@@ -1,6 +1,6 @@
 [package]
-name = "pekin"
-version = "0.6.8"
+name = "koelu"
+version = "0.6.9"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes, dependency reviews, and local-first agent workflows"
@@ -22,8 +22,8 @@ include = [
     "/.github/workflows/scripts/pr-state.sh",
     "/.github/workflows/scripts/pr-trust.sh",
     "/docs/*.md",
-    "/docs/assets/pekin-poster.webp",
-    "/assets/pekin-app-duck.png",
+    "/docs/assets/koelu-poster.webp",
+    "/assets/koelu-app-duck.png",
     "/src/*.rs",
     "/src/cli/*.rs",
     "/src/agent/*.rs",
@@ -65,5 +65,5 @@ strip = true
 unsafe_code = "deny"
 
 [[bin]]
-name = "pekin"
+name = "koelu"
 path = "src/main.rs"

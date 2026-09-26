@@ -23,10 +23,10 @@ enum AppPrivateKey {
 impl AppPrivateKey {
     fn read(&self) -> Result<String> {
         match self {
-            Self::Environment => env::var("PEKIN_APP_PRIVATE_KEY")
+            Self::Environment => env::var("KOELU_APP_PRIVATE_KEY")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| anyhow!("PEKIN_APP_PRIVATE_KEY is empty")),
+                .ok_or_else(|| anyhow!("KOELU_APP_PRIVATE_KEY is empty")),
             Self::File(path) => read_app_private_key(path),
         }
     }
@@ -52,7 +52,7 @@ impl ServiceTokenProvider {
         arguments: &ServeArgs,
         scope: github::InstallationTokenScope,
     ) -> Result<Self> {
-        let private_key_environment = env::var("PEKIN_APP_PRIVATE_KEY")
+        let private_key_environment = env::var("KOELU_APP_PRIVATE_KEY")
             .ok()
             .is_some_and(|value| !value.trim().is_empty());
         Ok(Self {
@@ -112,7 +112,7 @@ impl ServiceTokenProvider {
 fn app_credentials(arguments: &ServeArgs, private_key_environment: bool) -> Result<AppCredentials> {
     let private_key_file = arguments.app_private_key_file.clone();
     if private_key_file.is_some() && private_key_environment {
-        bail!("use either --app-private-key-file or PEKIN_APP_PRIVATE_KEY, not both");
+        bail!("use either --app-private-key-file or KOELU_APP_PRIVATE_KEY, not both");
     }
     let issuer = arguments
         .app_client_id
@@ -125,7 +125,7 @@ fn app_credentials(arguments: &ServeArgs, private_key_environment: bool) -> Resu
         (None, true) => AppPrivateKey::Environment,
         (None, false) => bail!("provide --app-private-key-file with the GitHub App client ID"),
         (Some(_), true) => {
-            bail!("use either --app-private-key-file or PEKIN_APP_PRIVATE_KEY, not both")
+            bail!("use either --app-private-key-file or KOELU_APP_PRIVATE_KEY, not both")
         }
     };
     Ok(AppCredentials {
@@ -137,23 +137,23 @@ fn app_credentials(arguments: &ServeArgs, private_key_environment: bool) -> Resu
 }
 
 fn app_slug() -> Result<String> {
-    app_slug_from(env::var("PEKIN_APP_SLUG").ok().as_deref())
+    app_slug_from(env::var("KOELU_APP_SLUG").ok().as_deref())
 }
 
 fn app_slug_from(value: Option<&str>) -> Result<String> {
     let slug = value
         .filter(|value| !value.is_empty())
-        .unwrap_or(apps::PEKIN_SLUG)
+        .unwrap_or(apps::KOELU_SLUG)
         .to_owned();
     apps::validate_slug(&slug)?;
-    if slug != apps::PEKIN_SLUG {
-        bail!("PEKIN_APP_SLUG must be {}", apps::PEKIN_SLUG);
+    if slug != apps::KOELU_SLUG {
+        bail!("KOELU_APP_SLUG must be {}", apps::KOELU_SLUG);
     }
     Ok(slug)
 }
 
 fn installation_seed() -> Result<usize> {
-    installation_seed_from(env::var("PEKIN_INSTALLATION_SEED").ok().as_deref())
+    installation_seed_from(env::var("KOELU_INSTALLATION_SEED").ok().as_deref())
 }
 
 fn installation_seed_from(value: Option<&str>) -> Result<usize> {
@@ -161,7 +161,7 @@ fn installation_seed_from(value: Option<&str>) -> Result<usize> {
         .filter(|value| !value.is_empty())
         .map(str::parse::<usize>)
         .transpose()
-        .map_err(|_| anyhow!("PEKIN_INSTALLATION_SEED must be a non-negative integer"))
+        .map_err(|_| anyhow!("KOELU_INSTALLATION_SEED must be a non-negative integer"))
         .map(Option::unwrap_or_default)
 }
 
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn service_identity_inputs_are_strict() -> Result<()> {
-        assert_eq!(app_slug_from(None)?, apps::PEKIN_SLUG);
+        assert_eq!(app_slug_from(None)?, apps::KOELU_SLUG);
         assert_eq!(installation_seed_from(Some("42"))?, 42);
         assert!(app_slug_from(Some("rad duck")).is_err());
         assert!(app_slug_from(Some("another-app")).is_err());
@@ -279,7 +279,7 @@ mod tests {
         use std::os::unix::fs::{PermissionsExt as _, symlink};
 
         let temporary = tempfile::tempdir()?;
-        let key = temporary.path().join("pekin.pem");
+        let key = temporary.path().join("koelu.pem");
         fs::write(&key, "private key")?;
         fs::set_permissions(&key, fs::Permissions::from_mode(0o600))?;
         assert_eq!(read_app_private_key(&key)?, "private key");

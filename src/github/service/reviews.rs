@@ -71,7 +71,7 @@ where
                 record_sweep_failure(
                     &mut failures,
                     name,
-                    &anyhow!(".github/pekin.json has an invalid trusted solver source: {error}"),
+                    &anyhow!(".github/koelu.json has an invalid trusted solver source: {error}"),
                 );
                 continue;
             }
@@ -79,7 +79,7 @@ where
                 record_sweep_failure(
                     &mut failures,
                     name,
-                    &anyhow!(".github/pekin.json has no trusted solver source"),
+                    &anyhow!(".github/koelu.json has no trusted solver source"),
                 );
                 continue;
             }
@@ -87,13 +87,13 @@ where
         if checks.is_empty()
             || checks.len() > 32
             || checks.iter().any(|check| {
-                check.is_empty() || check.len() > 200 || check.starts_with("Pekin dependasolve")
+                check.is_empty() || check.len() > 200 || check.starts_with("Koelu dependasolve")
             })
         {
             record_sweep_failure(
                 &mut failures,
                 name,
-                &anyhow!(".github/pekin.json has invalid CI evidence names"),
+                &anyhow!(".github/koelu.json has invalid CI evidence names"),
             );
             continue;
         }
@@ -157,7 +157,7 @@ where
 
 fn service_configuration(github: &GitHub) -> Result<Option<Value>> {
     let Some(configuration) = github
-        .raw_optional("contents/.github/pekin.json")?
+        .raw_optional("contents/.github/koelu.json")?
         .and_then(|content| serde_json::from_str::<Value>(&content).ok())
     else {
         return Ok(None);
@@ -187,7 +187,7 @@ mod tests {
             ("keys-i/rady@0123456789abcdef0123456789abcdef01234567", true),
             ("keys-i/rady@main", false),
             (
-                "other/pekin@0123456789abcdef0123456789abcdef01234567",
+                "other/koelu@0123456789abcdef0123456789abcdef01234567",
                 false,
             ),
         ] {

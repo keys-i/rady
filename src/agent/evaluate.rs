@@ -106,10 +106,10 @@ pub fn evaluate_cancellable(
     let mut environment = BTreeMap::new();
     if harness == Harness::Command {
         environment.insert(
-            "PEKIN_MODEL".to_owned(),
+            "KOELU_MODEL".to_owned(),
             model.unwrap_or_default().to_owned(),
         );
-        environment.insert("PEKIN_READ_ONLY".to_owned(), "1".to_owned());
+        environment.insert("KOELU_READ_ONLY".to_owned(), "1".to_owned());
     }
     let result = run_cancellable(
         command,

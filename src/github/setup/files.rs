@@ -14,7 +14,7 @@ const MAX_CONFIGURATION_BYTES: u64 = 64 * 1024;
 
 pub fn checks(values: &[String]) -> Result<Vec<String>> {
     if values.is_empty() || values.len() > 32 || values.iter().any(|value| !valid_check(value)) {
-        bail!("provide nonempty CI checks that do not name Pekin dependasolve itself");
+        bail!("provide nonempty CI checks that do not name Koelu dependasolve itself");
     }
     let mut seen = BTreeSet::new();
     let checks = values
@@ -32,7 +32,7 @@ fn valid_check(value: &str) -> bool {
     !value.trim().is_empty()
         && value.len() <= 200
         && !value.chars().any(char::is_control)
-        && !value.starts_with("Pekin dependasolve")
+        && !value.starts_with("Koelu dependasolve")
 }
 
 pub fn local_files(
@@ -51,7 +51,7 @@ pub(super) fn existing_configuration(directory: &Path) -> Result<Option<Value>> 
     if !root.is_dir() {
         bail!("--directory must be a directory");
     }
-    let config = safe_path(&root, ".github/pekin.json")?;
+    let config = safe_path(&root, ".github/koelu.json")?;
     match fs::symlink_metadata(&config) {
         Ok(metadata) if metadata.file_type().is_file() => {
             let text = read_configuration(&config, &metadata)?;
@@ -73,7 +73,7 @@ pub(super) fn refuse_existing_configuration(directory: &Path, overwrite: bool) -
     if !root.is_dir() {
         bail!("--directory must be a directory");
     }
-    let config = safe_path(&root, ".github/pekin.json")?;
+    let config = safe_path(&root, ".github/koelu.json")?;
     match fs::symlink_metadata(&config) {
         Ok(_) => bail!(
             "refusing to overwrite existing content: {}",
@@ -106,7 +106,7 @@ pub(super) fn setup_files(
             "agreement": agreement.cloned().unwrap_or(Value::Null),
         }))?
     );
-    let config = safe_path(&root, ".github/pekin.json")?;
+    let config = safe_path(&root, ".github/koelu.json")?;
     let mut files = BTreeMap::from([(config.clone(), configuration)]);
     let dependabot = [
         safe_path(&root, ".github/dependabot.yml")?,
@@ -135,7 +135,7 @@ pub(super) fn setup_files(
 fn read_configuration(path: &Path, metadata: &fs::Metadata) -> Result<String> {
     if metadata.len() > MAX_CONFIGURATION_BYTES {
         bail!(
-            "existing Pekin configuration is too large: {}",
+            "existing Koelu configuration is too large: {}",
             path.display()
         );
     }
@@ -281,7 +281,7 @@ mod tests {
     fn generated_configuration_overwrites_by_default_and_can_be_protected() -> Result<()> {
         let source = SourceRef::parse(&format!("keys-i/rady@{}", "b".repeat(40)))?;
         let temporary = tempfile::tempdir()?;
-        let path = temporary.path().join(".github/pekin.json");
+        let path = temporary.path().join(".github/koelu.json");
         fs::create_dir_all(path.parent().expect("generated file parent"))?;
         fs::write(&path, "existing generated content\n")?;
         assert!(
@@ -291,7 +291,7 @@ mod tests {
         let files = local_files(temporary.path(), &source, &["test".into()], true)?;
         let generated = files
             .iter()
-            .find(|(candidate, _)| candidate.ends_with(".github/pekin.json"))
+            .find(|(candidate, _)| candidate.ends_with(".github/koelu.json"))
             .map(|(_, content)| content)
             .expect("generated configuration");
         write_setup_file(&path, generated.as_bytes(), true)?;
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn existing_configuration_is_reused_only_when_it_is_parseable() -> Result<()> {
         let temporary = tempfile::tempdir()?;
-        let config = temporary.path().join(".github/pekin.json");
+        let config = temporary.path().join(".github/koelu.json");
         fs::create_dir_all(config.parent().expect("configuration parent"))?;
         for (content, expected) in [
             (r#"{"schema":1,"agreement":{"terms":"2026-09-23"}}"#, true),
@@ -333,7 +333,7 @@ mod tests {
             checks(&["test".into(), "lint".into(), "test".into()])?,
             ["test", "lint"]
         );
-        assert!(checks(&["Pekin dependasolve gate".into()]).is_err());
+        assert!(checks(&["Koelu dependasolve gate".into()]).is_err());
         Ok(())
     }
 

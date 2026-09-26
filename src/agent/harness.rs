@@ -13,12 +13,12 @@ use super::{Harness, ProcessOutput, Usage};
 
 pub fn executable(harness: Harness) -> Result<PathBuf> {
     if harness == Harness::Command {
-        let arguments = split_command(&env::var("PEKIN_AGENT_COMMAND").unwrap_or_default())?;
+        let arguments = split_command(&env::var("KOELU_AGENT_COMMAND").unwrap_or_default())?;
         let first = arguments.first().ok_or_else(|| {
-            anyhow!("set PEKIN_AGENT_COMMAND to an installed non-interactive agent command")
+            anyhow!("set KOELU_AGENT_COMMAND to an installed non-interactive agent command")
         })?;
         return which(first).ok_or_else(|| {
-            anyhow!("set PEKIN_AGENT_COMMAND to an installed non-interactive agent command")
+            anyhow!("set KOELU_AGENT_COMMAND to an installed non-interactive agent command")
         });
     }
     let name = harness.as_str();
@@ -49,7 +49,7 @@ pub fn executable(harness: Harness) -> Result<PathBuf> {
         } else {
             "claude auth login"
         };
-        bail!("run {login} before using Pekin");
+        bail!("run {login} before using Koelu");
     }
     Ok(binary)
 }
@@ -75,7 +75,7 @@ pub fn command(
         bail!("coding directory must be a directory");
     }
     if !(1..=8).contains(&agents) {
-        bail!("use between 1 and 8 Pekin agents");
+        bail!("use between 1 and 8 Koelu agents");
     }
     if harness == Harness::Command {
         let setting = command_setting(read_only);
@@ -223,8 +223,8 @@ pub fn run_cancellable(
     let command_environment = if harness == Harness::Command {
         command_environment(
             environment,
-            env::var("PEKIN_COMMAND_ALLOW_GEMINI").as_deref() == Ok("1"),
-            env::var("PEKIN_GEMINI_API_KEY").ok(),
+            env::var("KOELU_COMMAND_ALLOW_GEMINI").as_deref() == Ok("1"),
+            env::var("KOELU_GEMINI_API_KEY").ok(),
         )?
     } else {
         environment.clone()
@@ -272,9 +272,9 @@ const MAX_GEMINI_API_KEY_BYTES: usize = 1024;
 
 fn command_setting(read_only: bool) -> &'static str {
     if read_only {
-        "PEKIN_REVIEW_COMMAND"
+        "KOELU_REVIEW_COMMAND"
     } else {
-        "PEKIN_AGENT_COMMAND"
+        "KOELU_AGENT_COMMAND"
     }
 }
 
@@ -287,12 +287,12 @@ fn command_environment(
     environment.remove("GEMINI_API_KEY");
     if allow_gemini {
         let key = gemini_api_key
-            .ok_or_else(|| anyhow!("PEKIN_COMMAND_ALLOW_GEMINI requires PEKIN_GEMINI_API_KEY"))?;
+            .ok_or_else(|| anyhow!("KOELU_COMMAND_ALLOW_GEMINI requires KOELU_GEMINI_API_KEY"))?;
         if key.is_empty()
             || key.len() > MAX_GEMINI_API_KEY_BYTES
             || key.chars().any(char::is_control)
         {
-            bail!("PEKIN_GEMINI_API_KEY is not safe to pass to the command harness");
+            bail!("KOELU_GEMINI_API_KEY is not safe to pass to the command harness");
         }
         environment.insert("GEMINI_API_KEY".to_owned(), key);
     }
@@ -472,8 +472,8 @@ mod tests {
     #[test]
     fn command_paths_and_gemini_forwarding_are_explicit() -> Result<()> {
         for (read_only, expected) in [
-            (false, "PEKIN_AGENT_COMMAND"),
-            (true, "PEKIN_REVIEW_COMMAND"),
+            (false, "KOELU_AGENT_COMMAND"),
+            (true, "KOELU_REVIEW_COMMAND"),
         ] {
             assert_eq!(command_setting(read_only), expected);
         }

@@ -114,7 +114,7 @@ pub fn render(
     ];
     if ready {
         lines.push(
-            "Everything Pekin could verify is clear; GitHub still decides whether this branch can merge."
+            "Everything Koelu could verify is clear; GitHub still decides whether this branch can merge."
                 .to_owned(),
         );
     } else {
@@ -322,9 +322,9 @@ fn next_action(event: &str, blockers: &[String]) -> &'static str {
     if event == "APPROVE" {
         "Review the Files changed tab, then use GitHub's Merge control when it is enabled"
     } else if ci_wait_only(blockers) {
-        "Wait for the named checks to finish on the reviewed head, then rerun Pekin"
+        "Wait for the named checks to finish on the reviewed head, then rerun Koelu"
     } else {
-        "Resolve the blockers below, then rerun Pekin on the new head"
+        "Resolve the blockers below, then rerun Koelu on the new head"
     }
 }
 

@@ -50,7 +50,7 @@ pub(super) fn sweep_with_token(
     validate_owner_filter(arguments.owner.as_deref())?;
     let repositories =
         github::authenticated_pages("installation/repositories", "repositories", token)?;
-    let model = env::var("PEKIN_MODEL")
+    let model = env::var("KOELU_MODEL")
         .ok()
         .filter(|value| !value.is_empty());
     let mut failures = Vec::new();
@@ -72,7 +72,7 @@ pub(super) fn sweep_with_token(
         let private = repository["private"].as_bool();
         let github = GitHub::new(name, token)?;
         let accepted = match github
-            .raw_optional("contents/.github/pekin.json")?
+            .raw_optional("contents/.github/koelu.json")?
             .and_then(|content| serde_json::from_str::<Value>(&content).ok())
         {
             Some(configuration) => match setup::verified_configuration(&github, &configuration) {
@@ -133,7 +133,7 @@ pub(super) fn sweep_with_token(
             ) {
                 if crate::mentions::is_hosted_unavailable(&error) {
                     eprintln!(
-                        "{name}: model providers are cooling down; Pekin will retry these mentions next pass"
+                        "{name}: model providers are cooling down; Koelu will retry these mentions next pass"
                     );
                     repo_failed = true;
                     break;
@@ -431,7 +431,7 @@ fn hosted_config(
         checks: vec![DELIVERY_CHECK.to_owned()],
         harness: arguments.harness,
         agents: 1,
-        model: env::var("PEKIN_MODEL")
+        model: env::var("KOELU_MODEL")
             .ok()
             .filter(|value| !value.is_empty()),
         model_choices: Vec::new(),
@@ -469,10 +469,10 @@ fn hosted_config(
 }
 
 fn app_slug() -> String {
-    env::var("PEKIN_APP_SLUG")
+    env::var("KOELU_APP_SLUG")
         .ok()
         .filter(|slug| !slug.is_empty())
-        .unwrap_or_else(|| "pekin".to_owned())
+        .unwrap_or_else(|| "koelu".to_owned())
 }
 
 fn terminal_error(error: &anyhow::Error) -> String {
@@ -529,7 +529,7 @@ mod tests {
             ),
             (
                 "keys-i/rady",
-                "https://api.github.com/repos/other/pekin/issues/42",
+                "https://api.github.com/repos/other/koelu/issues/42",
                 None,
             ),
             (
@@ -547,19 +547,19 @@ mod tests {
     fn dispatch_claims_choose_the_first_bot_marker_and_terminal_errors_are_bounded() {
         let marker = crate::mentions::claim_marker(9, 1);
         let mut comments = vec![
-            serde_json::json!({"id": 8, "user": {"login": "pekin[bot]"}, "body": marker}),
+            serde_json::json!({"id": 8, "user": {"login": "koelu[bot]"}, "body": marker}),
             serde_json::json!({"id": 4, "user": {"login": "someone"}, "body": marker}),
-            serde_json::json!({"id": 3, "user": {"login": "Pekin[bot]"}, "body": marker}),
+            serde_json::json!({"id": 3, "user": {"login": "Koelu[bot]"}, "body": marker}),
         ];
-        assert_eq!(first_claim(&comments, "pekin[bot]", 9), Some(3));
-        assert!(unfinished_claim(&comments, "pekin[bot]", 9, 3));
-        assert!(!unfinished_claim(&comments, "pekin[bot]", 9, 8));
+        assert_eq!(first_claim(&comments, "koelu[bot]", 9), Some(3));
+        assert!(unfinished_claim(&comments, "koelu[bot]", 9, 3));
+        assert!(!unfinished_claim(&comments, "koelu[bot]", 9, 8));
         comments.push(serde_json::json!({
             "id": 10,
-            "user": {"login": "pekin[bot]"},
+            "user": {"login": "koelu[bot]"},
             "body": crate::mentions::result_marker(9),
         }));
-        assert!(!unfinished_claim(&comments, "pekin[bot]", 9, 3));
+        assert!(!unfinished_claim(&comments, "koelu[bot]", 9, 3));
         assert_eq!(terminal_error(&anyhow!("failed\nnow")), "failednow");
         assert_eq!(
             terminal_error(&anyhow!("{}", "x".repeat(1_001)))
@@ -575,19 +575,19 @@ mod tests {
         for (case, claims, result, expected) in [
             (
                 "active",
-                vec![(3, "pekin[bot]", now - CLAIM_LEASE.as_secs() + 1)],
+                vec![(3, "koelu[bot]", now - CLAIM_LEASE.as_secs() + 1)],
                 false,
                 None,
             ),
             (
                 "stale",
-                vec![(3, "pekin[bot]", now - CLAIM_LEASE.as_secs())],
+                vec![(3, "koelu[bot]", now - CLAIM_LEASE.as_secs())],
                 false,
                 Some(3),
             ),
             (
                 "completed",
-                vec![(3, "pekin[bot]", now - CLAIM_LEASE.as_secs())],
+                vec![(3, "koelu[bot]", now - CLAIM_LEASE.as_secs())],
                 true,
                 None,
             ),
@@ -600,15 +600,15 @@ mod tests {
             (
                 "duplicate winner",
                 vec![
-                    (8, "pekin[bot]", now - CLAIM_LEASE.as_secs()),
-                    (3, "pekin[bot]", now - CLAIM_LEASE.as_secs() + 1),
+                    (8, "koelu[bot]", now - CLAIM_LEASE.as_secs()),
+                    (3, "koelu[bot]", now - CLAIM_LEASE.as_secs() + 1),
                 ],
                 false,
                 None,
             ),
             (
                 "claim then abort recovery",
-                vec![(3, "pekin[bot]", now - CLAIM_LEASE.as_secs())],
+                vec![(3, "koelu[bot]", now - CLAIM_LEASE.as_secs())],
                 false,
                 Some(3),
             ),
@@ -618,7 +618,7 @@ mod tests {
                 scan_claim_record(
                     &mut scan,
                     "owner/repository",
-                    "pekin[bot]",
+                    "koelu[bot]",
                     &serde_json::json!({
                         "id": id,
                         "user": {"login": bot},
@@ -631,10 +631,10 @@ mod tests {
                 scan_claim_record(
                     &mut scan,
                     "owner/repository",
-                    "pekin[bot]",
+                    "koelu[bot]",
                     &serde_json::json!({
                         "id": 10,
-                        "user": {"login": "pekin[bot]"},
+                        "user": {"login": "koelu[bot]"},
                         "issue_url": "https://api.github.com/repos/owner/repository/issues/7",
                         "body": crate::mentions::result_marker(9),
                     }),

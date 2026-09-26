@@ -5,7 +5,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 pub const APP_OWNER: &str = "keys-i";
-pub const PEKIN_SLUG: &str = "pekin";
+pub const KOELU_SLUG: &str = "koelu";
 
 pub fn permissions() -> Value {
     json!({
@@ -71,7 +71,7 @@ pub fn require_app_identity(app: &Value, slug: &str) -> Result<()> {
         .as_str()
         .is_none_or(|actual| !actual.eq_ignore_ascii_case(slug))
     {
-        bail!("the App credentials do not belong to the configured Pekin App");
+        bail!("the App credentials do not belong to the configured Koelu App");
     }
     require_permissions(app)
 }
@@ -85,7 +85,7 @@ pub fn open_installation(slug: &str, repo: &str) -> Result<()> {
     github::validate_repository(repo)?;
     validate_slug(slug)?;
     let install = format!("https://github.com/apps/{slug}/installations/new");
-    eprintln!("Install Pekin with Only select repositories -> {repo}");
+    eprintln!("Install Koelu with Only select repositories -> {repo}");
     open_browser(&install);
     Ok(())
 }
@@ -131,12 +131,12 @@ mod tests {
         let command = browser_command("open", &[], "https://example.test");
         let environment = command.get_envs().collect::<BTreeMap<_, _>>();
         assert!(environment.contains_key(std::ffi::OsStr::new("PATH")));
-        assert!(!environment.contains_key(std::ffi::OsStr::new("PEKIN_APP_PRIVATE_KEY")));
+        assert!(!environment.contains_key(std::ffi::OsStr::new("KOELU_APP_PRIVATE_KEY")));
     }
 
     #[test]
     fn app_permissions_reserve_write_access_for_approved_delivery() -> Result<()> {
-        let mut app = json!({"permissions": permissions(), "owner": {"login": APP_OWNER}, "public": true, "slug": PEKIN_SLUG});
+        let mut app = json!({"permissions": permissions(), "owner": {"login": APP_OWNER}, "public": true, "slug": KOELU_SLUG});
         assert_eq!(app["permissions"]["contents"], "write");
         require_app_owner(&app)?;
         require_permissions(&app)?;
@@ -160,10 +160,10 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("workflows");
-        require_app_identity(&app, PEKIN_SLUG)?;
+        require_app_identity(&app, KOELU_SLUG)?;
         app["public"] = json!(false);
-        assert!(require_app_identity(&app, PEKIN_SLUG).is_err());
-        assert!(validate_slug("Pekin").is_err());
+        assert!(require_app_identity(&app, KOELU_SLUG).is_err());
+        assert!(validate_slug("Koelu").is_err());
         Ok(())
     }
 }
