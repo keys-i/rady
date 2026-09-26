@@ -1,9 +1,9 @@
-class Pekin < Formula
+class Koelu < Formula
   desc "Checks agent-made changes and reviews Dependabot pull requests"
   homepage "https://github.com/keys-i/rady"
   url "https://github.com/keys-i/rady.git",
-      tag: "v0.6.8"
-  version "0.6.8"
+      tag: "v0.6.9"
+  version "0.6.9"
   license "MIT"
 
   depends_on "rust" => :build
@@ -18,8 +18,8 @@ class Pekin < Formula
   end
 
   test do
-    ENV["PEKIN_RUNS_DIR"] = (testpath/"runs").to_s
-    assert_match '"runs": []', shell_output("#{bin}/pekin --output json runs")
-    assert_match "Usage: pekin dependasolve", shell_output("#{bin}/pekin dependasolve --help")
+    ENV["KOELU_RUNS_DIR"] = (testpath/"runs").to_s
+    assert_match '"runs": []', shell_output("#{bin}/koelu --output json runs")
+    assert_match "Usage: koelu dependasolve", shell_output("#{bin}/koelu dependasolve --help")
   end
 end

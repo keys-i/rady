@@ -6,7 +6,7 @@ class Rady < Formula
   version "0.6.7"
   license "MIT"
 
-  deprecate! date: "2026-09-26", because: "was renamed to Pekin", replacement_formula: "pekin"
+  deprecate! date: "2026-09-26", because: "was renamed to Koelu", replacement_formula: "koelu"
 
   depends_on "rust" => :build
   deny_network_access!
