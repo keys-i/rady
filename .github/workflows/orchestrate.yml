@@ -1,4 +1,4 @@
-name: Rady orchestration
+name: Koelu orchestration
 
 on:
   schedule:
@@ -9,49 +9,54 @@ permissions:
   contents: read
 
 concurrency:
-  group: rady-central-orchestration
+  group: koelu-central-orchestration
   cancel-in-progress: false
 
 jobs:
   mentions:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
-      - name: Check out central Rady service
+      - name: Check out central Koelu service
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build trusted Rady
-        run: cargo build --release --locked --bin rady
-      - name: Answer consented RadDuck mentions
+      - name: Build trusted Koelu
+        run: cargo build --release --locked --bin koelu
+      - name: Install the pinned hosted editing harness
+        run: npm install --global --ignore-scripts --no-audit --no-fund @google/gemini-cli@0.61.0
+      - name: Answer and deliver consented Koelu requests
         env:
-          RADY_APP_CLIENT_ID: ${{ vars.RADY_APP_CLIENT_ID }}
-          RADY_APP_PRIVATE_KEY: ${{ secrets.RADY_APP_PRIVATE_KEY }}
-          RADY_APP_SLUG: ${{ vars.RADY_APP_SLUG }}
-          RADY_GEMINI_API_KEY: ${{ secrets.RADY_GEMINI_API_KEY }}
-          RADY_CEREBRAS_API_KEY: ${{ secrets.RADY_CEREBRAS_API_KEY }}
-          RADY_XAI_API_KEY: ${{ secrets.RADY_XAI_API_KEY }}
-          RADY_GROQ_API_KEY: ${{ secrets.RADY_GROQ_API_KEY }}
-          RADY_CLOUDFLARE_API_TOKEN: ${{ secrets.RADY_CLOUDFLARE_API_TOKEN }}
-          RADY_CLOUDFLARE_ACCOUNT_ID: ${{ vars.RADY_CLOUDFLARE_ACCOUNT_ID }}
-          RADY_OPENROUTER_API_KEY: ${{ secrets.RADY_OPENROUTER_API_KEY }}
-          RADY_GEMINI_PRIVATE_OK: ${{ vars.RADY_GEMINI_PRIVATE_OK || 'false' }}
-          RADY_CEREBRAS_PRIVATE_OK: ${{ vars.RADY_CEREBRAS_PRIVATE_OK || 'false' }}
-          RADY_XAI_PRIVATE_OK: ${{ vars.RADY_XAI_PRIVATE_OK || 'false' }}
-          RADY_GROQ_PRIVATE_OK: ${{ vars.RADY_GROQ_PRIVATE_OK || 'false' }}
-          RADY_CLOUDFLARE_PRIVATE_OK: ${{ vars.RADY_CLOUDFLARE_PRIVATE_OK || 'false' }}
-          RADY_OPENROUTER_PRIVATE_OK: ${{ vars.RADY_OPENROUTER_PRIVATE_OK || 'false' }}
-          RADY_MODEL: ${{ vars.RADY_MODEL || '' }}
-          RADY_MODEL_CHOICES: ${{ vars.RADY_MODEL_CHOICES || '' }}
-          RADY_HARNESS: ${{ vars.RADY_HARNESS || 'codex' }}
+          KOELU_APP_CLIENT_ID: ${{ vars.KOELU_APP_CLIENT_ID }}
+          KOELU_APP_PRIVATE_KEY: ${{ secrets.KOELU_APP_PRIVATE_KEY }}
+          KOELU_APP_SLUG: ${{ vars.KOELU_APP_SLUG }}
+          KOELU_GEMINI_API_KEY: ${{ secrets.KOELU_GEMINI_API_KEY }}
+          KOELU_CEREBRAS_API_KEY: ${{ secrets.KOELU_CEREBRAS_API_KEY }}
+          KOELU_XAI_API_KEY: ${{ secrets.KOELU_XAI_API_KEY }}
+          KOELU_GROQ_API_KEY: ${{ secrets.KOELU_GROQ_API_KEY }}
+          KOELU_CLOUDFLARE_API_TOKEN: ${{ secrets.KOELU_CLOUDFLARE_API_TOKEN }}
+          KOELU_CLOUDFLARE_ACCOUNT_ID: ${{ vars.KOELU_CLOUDFLARE_ACCOUNT_ID }}
+          KOELU_OPENROUTER_API_KEY: ${{ secrets.KOELU_OPENROUTER_API_KEY }}
+          KOELU_GEMINI_PRIVATE_OK: ${{ vars.KOELU_GEMINI_PRIVATE_OK || 'false' }}
+          KOELU_CEREBRAS_PRIVATE_OK: ${{ vars.KOELU_CEREBRAS_PRIVATE_OK || 'false' }}
+          KOELU_XAI_PRIVATE_OK: ${{ vars.KOELU_XAI_PRIVATE_OK || 'false' }}
+          KOELU_GROQ_PRIVATE_OK: ${{ vars.KOELU_GROQ_PRIVATE_OK || 'false' }}
+          KOELU_CLOUDFLARE_PRIVATE_OK: ${{ vars.KOELU_CLOUDFLARE_PRIVATE_OK || 'false' }}
+          KOELU_OPENROUTER_PRIVATE_OK: ${{ vars.KOELU_OPENROUTER_PRIVATE_OK || 'false' }}
+          KOELU_MODEL: ${{ vars.KOELU_MODEL || '' }}
+          KOELU_MODEL_CHOICES: ${{ vars.KOELU_MODEL_CHOICES || '' }}
+          KOELU_HARNESS: command
+          KOELU_AGENT_COMMAND: bash ${{ github.workspace }}/.github/workflows/scripts/gemini.sh
+          KOELU_REVIEW_COMMAND: bash ${{ github.workspace }}/.github/workflows/scripts/gemini.sh
+          KOELU_COMMAND_ALLOW_GEMINI: '1'
         run: |
           set -euo pipefail
           [[ "$GITHUB_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
             echo 'GitHub run number is invalid' >&2
             exit 1
           }
-          export RADY_INSTALLATION_SEED="$GITHUB_RUN_NUMBER"
-          target/release/rady agent serve --once
+          export KOELU_INSTALLATION_SEED="$GITHUB_RUN_NUMBER"
+          target/release/koelu agent serve --once
 
   targets:
     runs-on: ubuntu-24.04
@@ -60,27 +65,27 @@ jobs:
       matrix: ${{ steps.targets.outputs.matrix }}
       has-targets: ${{ steps.targets.outputs.has-targets }}
     steps:
-      - name: Check out central Rady service
+      - name: Check out central Koelu service
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build trusted Rady
-        run: cargo build --release --locked --bin rady
+      - name: Build trusted Koelu
+        run: cargo build --release --locked --bin koelu
       - name: Find consented pull requests
         id: targets
         env:
-          RADY_APP_CLIENT_ID: ${{ vars.RADY_APP_CLIENT_ID }}
-          RADY_APP_PRIVATE_KEY: ${{ secrets.RADY_APP_PRIVATE_KEY }}
-          RADY_APP_SLUG: ${{ vars.RADY_APP_SLUG }}
+          KOELU_APP_CLIENT_ID: ${{ vars.KOELU_APP_CLIENT_ID }}
+          KOELU_APP_PRIVATE_KEY: ${{ secrets.KOELU_APP_PRIVATE_KEY }}
+          KOELU_APP_SLUG: ${{ vars.KOELU_APP_SLUG }}
         run: |
           set -euo pipefail
           [[ "$GITHUB_RUN_NUMBER" =~ ^[1-9][0-9]*$ ]] || {
             echo 'GitHub run number is invalid' >&2
             exit 1
           }
-          export RADY_INSTALLATION_SEED="$GITHUB_RUN_NUMBER"
-          export RADY_TARGET_SEED="$GITHUB_RUN_NUMBER"
-          matrix=$(target/release/rady agent targets --max-reviews 4)
+          export KOELU_INSTALLATION_SEED="$GITHUB_RUN_NUMBER"
+          export KOELU_TARGET_SEED="$GITHUB_RUN_NUMBER"
+          matrix=$(target/release/koelu agent targets --max-reviews 4)
           jq -e '.include | type == "array" and length <= 4' <<<"$matrix" > /dev/null
           echo "matrix=$(jq -c . <<<"$matrix")" >> "$GITHUB_OUTPUT"
           if [[ $(jq '.include | length' <<<"$matrix") == 0 ]]; then
@@ -99,28 +104,28 @@ jobs:
     uses: ./.github/workflows/solve.yml
     with:
       solver-ref: ${{ matrix.solver_ref }}
-      app-client-id: ${{ vars.RADY_APP_CLIENT_ID }}
+      app-client-id: ${{ vars.KOELU_APP_CLIENT_ID }}
       repo: ${{ matrix.repo }}
       repo-owner: ${{ matrix.owner }}
       repo-name: ${{ matrix.name }}
       repository-private: ${{ matrix.private }}
       required-checks: ${{ toJSON(matrix.checks) }}
-      model: ${{ vars.RADY_MODEL || '' }}
-      model-choices: ${{ vars.RADY_MODEL_CHOICES || '' }}
-      cloudflare-account-id: ${{ vars.RADY_CLOUDFLARE_ACCOUNT_ID || '' }}
-      gemini-private-ok: ${{ vars.RADY_GEMINI_PRIVATE_OK == 'true' }}
-      cerebras-private-ok: ${{ vars.RADY_CEREBRAS_PRIVATE_OK == 'true' }}
-      xai-private-ok: ${{ vars.RADY_XAI_PRIVATE_OK == 'true' }}
-      groq-private-ok: ${{ vars.RADY_GROQ_PRIVATE_OK == 'true' }}
-      cloudflare-private-ok: ${{ vars.RADY_CLOUDFLARE_PRIVATE_OK == 'true' }}
-      openrouter-private-ok: ${{ vars.RADY_OPENROUTER_PRIVATE_OK == 'true' }}
-      harness: ${{ vars.RADY_HARNESS || 'codex' }}
+      model: ${{ vars.KOELU_MODEL || '' }}
+      model-choices: ${{ vars.KOELU_MODEL_CHOICES || '' }}
+      cloudflare-account-id: ${{ vars.KOELU_CLOUDFLARE_ACCOUNT_ID || '' }}
+      gemini-private-ok: ${{ vars.KOELU_GEMINI_PRIVATE_OK == 'true' }}
+      cerebras-private-ok: ${{ vars.KOELU_CEREBRAS_PRIVATE_OK == 'true' }}
+      xai-private-ok: ${{ vars.KOELU_XAI_PRIVATE_OK == 'true' }}
+      groq-private-ok: ${{ vars.KOELU_GROQ_PRIVATE_OK == 'true' }}
+      cloudflare-private-ok: ${{ vars.KOELU_CLOUDFLARE_PRIVATE_OK == 'true' }}
+      openrouter-private-ok: ${{ vars.KOELU_OPENROUTER_PRIVATE_OK == 'true' }}
+      harness: ${{ vars.KOELU_HARNESS || 'codex' }}
       pr-number: ${{ matrix.number }}
     secrets:
-      app-private-key: ${{ secrets.RADY_APP_PRIVATE_KEY }}
-      gemini-api-key: ${{ secrets.RADY_GEMINI_API_KEY }}
-      cerebras-api-key: ${{ secrets.RADY_CEREBRAS_API_KEY }}
-      xai-api-key: ${{ secrets.RADY_XAI_API_KEY }}
-      groq-api-key: ${{ secrets.RADY_GROQ_API_KEY }}
-      cloudflare-api-token: ${{ secrets.RADY_CLOUDFLARE_API_TOKEN }}
-      openrouter-api-key: ${{ secrets.RADY_OPENROUTER_API_KEY }}
+      app-private-key: ${{ secrets.KOELU_APP_PRIVATE_KEY }}
+      gemini-api-key: ${{ secrets.KOELU_GEMINI_API_KEY }}
+      cerebras-api-key: ${{ secrets.KOELU_CEREBRAS_API_KEY }}
+      xai-api-key: ${{ secrets.KOELU_XAI_API_KEY }}
+      groq-api-key: ${{ secrets.KOELU_GROQ_API_KEY }}
+      cloudflare-api-token: ${{ secrets.KOELU_CLOUDFLARE_API_TOKEN }}
+      openrouter-api-key: ${{ secrets.KOELU_OPENROUTER_API_KEY }}

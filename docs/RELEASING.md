@@ -1,25 +1,19 @@
-# Releasing Rady
+# Releasing Koelu
 
-`Cargo.toml`, `Cargo.lock`, the release manifest, changelog, and Homebrew formula must name the same release before its tag is created.
+Koelu 0.6.9 is the first version under the new name. Keep the crate, release manifest, formula, changelog, and release tag aligned before publication.
 
-Release Please normally owns the release pull request, tag, GitHub release, and locked crates.io publication. `CARGO_REGISTRY_TOKEN` belongs only in the central `keys-i/rady` release workflow or the maintainer's local Cargo credential store. `RADY_RELEASE_TOKEN` must be a fine-grained token limited to `keys-i/rady` with Contents, Issues and Pull requests write access so release pull requests trigger their checks; it must never be copied to an installed repository.
+## Cutover checks
 
-## Recovering a crates.io publication
+- Confirm the public [Koelu App](https://github.com/apps/koelu) is owned by `keys-i`; verify its visibility and exact permissions, and confirm the crate name is available before publishing
+- Move the central repository's existing `RADY_*` credentials to `KOELU_*` names, including `KOELU_RELEASE_TOKEN`, without copying them to installed repositories; the Koelu App ID and slug variables are already set
+- Confirm Terms `2026-09-27-t4` and Privacy `2026-09-27-p4` match the code and setup preview; each installed repository must accept them again
+- Run formatting, Clippy, tests, the locked release build, and a dry-run package check
+- Confirm the Koelu formula points at the eventual `v0.6.9` tag; the old Rady formula stays pinned to its historical tag and names Koelu as the replacement
 
-Use **Actions → Release → Run workflow** only after the matching GitHub release already exists. Enter its exact `vX.Y.Z` tag. The workflow rejects anything else, checks out that tag without credentials, confirms `Cargo.toml` contains the matching `rady` version, and checks crates.io first. A version already published is a successful no-op; an absent version is published from that immutable checkout. It never publishes `main` during recovery.
+Release Please normally creates the release pull request, tag, GitHub release, and locked crates.io publication. Add `CARGO_REGISTRY_TOKEN` and `KOELU_RELEASE_TOKEN` to the central `keys-i/rady` repository before publication. The latter needs only the repository permissions required to create a release pull request and trigger its checks.
 
-## Historical releases
+## Recovering publication
 
-GitHub releases through `v0.5.8` were reconstructed from the exact default-branch commits carrying each version. Their tags were not rewritten.
+Use **Actions → Release → Run workflow** only when the matching Koelu GitHub release and immutable `vX.Y.Z` tag already exist. The workflow checks out that tag, verifies its crate name and version, checks crates.io, and publishes only if that exact version is absent. Do not rebuild an older release from current source or move an existing tag.
 
-An unpublished historical crates.io version may be recovered only with the recovery workflow and its existing GitHub release tag. Published crates are immutable; never rebuild an old version from newer source or move an existing tag.
-
-Every immutable crate and tag must come from its own verified, versioned source state. Never rebuild an older version from the current tree or move an existing tag. This document does not claim that any external release exists.
-
-## Before merging
-
-- Confirm `Cargo.toml` and `Cargo.lock` say the intended next version
-- Confirm the manifest and Homebrew formula name the intended tag
-- Run formatting, Clippy, all tests, and the locked release build
-- Confirm release notes and installation documentation name the intended version
-- Confirm `RADY_RELEASE_TOKEN` and `CARGO_REGISTRY_TOKEN` are available only to the central release workflow
+The [changelog](CHANGELOG.md) records the Rady releases under their original name. The unpublished Pekin candidate is included in Koelu 0.6.9. The notice-only `rady` crate and deprecated Homebrew formula point to Koelu; they do not automatically move installed CLIs or saved runs. The [upgrade guide](UPGRADING.md) covers installed CLIs and repository consent.

@@ -1,48 +1,46 @@
-# Upgrading to Rady 0.6.7
+# Upgrading to Koelu 0.6.9
 
-Rady is one Rust binary. Install or build it, then use `rady --help`:
+Koelu replaces Pekin, which replaced Rady. You can upgrade directly from any earlier release. The [changelog](CHANGELOG.md) keeps the old names and commands in their historical entries.
 
-```sh
-cargo install rady --locked
-rady --help
-```
+## Install the new CLI
 
-## RadDuck cutover
-
-The hosted GitHub App and mention are now **RadDuck** and `@radduck`. The central service uses `RADY_APP_SLUG=radduck`. There is no legacy App name, slug, registration flow, token command, static token, App-ID setting, or compatibility alias.
-
-Rady 0.6.7 changes the consent contract. Every connected repository must rerun setup as an administrator:
+After Koelu is published, install it with Cargo or the existing Homebrew tap:
 
 ```sh
-rady setup --repo owner/repo --check test --accept-terms
+cargo install koelu --locked
+koelu --help
 ```
-
-This replaces the old receipt with current Terms and Privacy versions. Existing `.github/rady.json` files are intentionally stale until then.
-
-The machine-readable setup preview and result now use `app`; consumers of the retired `new_app` or `identity` fields must update. The repository configuration remains schema 1 with `source`, `checks`, and `agreement`. Its configured `source` remains a pin: central review rejects work when it does not match the trusted Rady source.
-
-For scripts, use the setup equivalent:
 
 ```sh
-rady dependasolve --repo owner/repo --check test --apply --accept-terms
+brew tap keys-i/rady https://github.com/keys-i/rady
+brew install keys-i/rady/koelu
 ```
 
-`dependasolve` only configures the repository. Reviews run later in the central service; it is not a direct review or merge command.
+You can remove the previous CLI after Koelu works on your machine with `cargo uninstall pekin` or `cargo uninstall rady`; for Homebrew, uninstall the matching old formula. The old local run folders are not moved. Keep any evidence you still need before removing them.
 
-## Review behaviour
+## Move the hosted service
 
-The central service polls recent installed work in a bounded, fair rotating window. Mention and discovery tokens are short-lived and installation-scoped. A selected review gets a repository-scoped token with only its required permissions.
+The public GitHub App and mention must both use **Koelu** and `@koelu`. Before deploying the renamed central workflow:
 
-Rady verifies the source pin, Dependabot evidence, and chosen checks. Unsupported, grouped, or ambiguous dependency updates receive a comment for manual review. The App registration reserves Contents write access for approved coding delivery, while mention and review tokens remain read-only and cannot merge. Repository owners retain the final decision.
+1. Confirm the existing App is [Koelu](https://github.com/apps/koelu) under `keys-i`, with its intended visibility and permissions.
+2. In the central `keys-i/rady` repository only, move the existing `RADY_*` credentials to their `KOELU_*` names. `KOELU_APP_CLIENT_ID` and `KOELU_APP_SLUG=koelu` are already set. Re-enter the App private key, Gemini key, and Cerebras key as Koelu secrets through GitHub settings; GitHub does not reveal their old values. Configure any additional provider keys you use, and add `KOELU_RELEASE_TOKEN` and `CARGO_REGISTRY_TOKEN` before publishing. Do not put these in target repositories.
+3. Deploy the Koelu central workflow only after the App and credentials are ready. Old environment variable names are not read by this version.
+4. Run setup as an administrator in each connected repository, then review and commit its generated `.github/koelu.json`. Remove an obsolete `.github/pekin.json` only after the new setup succeeds and its contents are no longer needed.
 
-## Removed assumptions
+Until the new workflow is deployed, the existing workflow may still read `RADY_APP_SLUG`. Set that legacy variable's value to `koelu` if you need it to keep running during the cutover; remove the variable after the old workflow is retired.
 
-Do not configure an App ID, token command, static token, or workflow in a target repository. Keep the App private key and every service secret only on the central host. Use agent operations only under `rady agent …`; `rady setup`, `rady code`, and `rady dependasolve` remain top-level.
+```sh
+koelu setup --repo owner/repo --check test --accept-terms
+```
 
-Mentions remain read-only:
+The Koelu service agreement uses Terms `2026-09-27-t4` and Privacy `2026-09-27-p4`. Earlier receipts do not cover this version. Setup records a new, closed consent issue and updates the repository's public configuration. `koelu dependasolve --repo owner/repo --check test --apply --accept-terms` is the scriptable equivalent; it configures the repository but does not run a review immediately.
+
+## What stays the same
+
+The central service polls rather than replying instantly. A mention can ask a read-only question:
 
 ```text
-@radduck What changed here, and what should I check?
+@koelu What changed here, and what should I check?
 ```
 
-Polling is not real-time. A comment or pull request is handled on a later scheduled cycle.
+An explicit change request still requires the same author to approve the exact proposal before Koelu creates an isolated branch and pull request. Koelu never merges for you. The `keys-i/rady` source pin, selected checks, and consent receipt remain required for hosted work; changing the product name does not loosen those gates.

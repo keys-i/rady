@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match rady::cli::run() {
+    match koelu::cli::run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => rady::cli::error_exit(error),
+        Err(error) => koelu::cli::error_exit(error),
     }
 }

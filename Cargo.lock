@@ -279,6 +279,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "koelu"
+version = "0.6.9"
+dependencies = [
+ "anyhow",
+ "base64",
+ "clap",
+ "getrandom 0.3.4",
+ "latex2mathml",
+ "nix",
+ "pulldown-cmark",
+ "regex",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "latex2mathml"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -374,25 +393,6 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
-name = "rady"
-version = "0.6.7"
-dependencies = [
- "anyhow",
- "base64",
- "clap",
- "getrandom 0.3.4",
- "latex2mathml",
- "nix",
- "pulldown-cmark",
- "regex",
- "ring",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
-]
 
 [[package]]
 name = "regex"

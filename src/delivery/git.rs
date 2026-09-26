@@ -61,7 +61,7 @@ pub(super) fn checkpoint(
         .take(64)
         .collect::<String>();
     let message = format!(
-        "rady: {}",
+        "koelu: {}",
         if label.is_empty() {
             "checkpoint"
         } else {
@@ -143,13 +143,17 @@ pub(super) fn parse_remote_ref<'a>(output: &'a str, reference: &str) -> Result<&
 }
 
 pub(super) fn git_network_auth(remote: &str) -> Result<Option<GitNetworkAuth>> {
-    match env::var("RADY_PUSH_TOKEN") {
-        Ok(token) => Ok(Some(GitNetworkAuth {
-            environment: git_network_environment(remote, &token)?,
-        })),
+    match env::var("KOELU_PUSH_TOKEN") {
+        Ok(token) => git_network_auth_for_token(remote, &token).map(Some),
         Err(env::VarError::NotPresent) => Ok(None),
-        Err(env::VarError::NotUnicode(_)) => bail!("RADY_PUSH_TOKEN must contain valid text"),
+        Err(env::VarError::NotUnicode(_)) => bail!("KOELU_PUSH_TOKEN must contain valid text"),
     }
+}
+
+pub(super) fn git_network_auth_for_token(remote: &str, token: &str) -> Result<GitNetworkAuth> {
+    Ok(GitNetworkAuth {
+        environment: git_network_environment(remote, token)?,
+    })
 }
 
 pub(super) fn git_network_environment(
@@ -160,13 +164,13 @@ pub(super) fn git_network_environment(
         || token.len() > MAX_PUSH_TOKEN_BYTES
         || !token.bytes().all(|byte| byte.is_ascii_graphic())
     {
-        bail!("RADY_PUSH_TOKEN must be 1 to {MAX_PUSH_TOKEN_BYTES} printable ASCII characters");
+        bail!("KOELU_PUSH_TOKEN must be 1 to {MAX_PUSH_TOKEN_BYTES} printable ASCII characters");
     }
     if remote
         .strip_prefix("https://github.com/")
         .is_none_or(str::is_empty)
     {
-        bail!("RADY_PUSH_TOKEN requires an HTTPS github.com origin");
+        bail!("KOELU_PUSH_TOKEN requires an HTTPS github.com origin");
     }
     let credentials = format!("x-access-token:{token}");
     Ok(BTreeMap::from([
@@ -261,6 +265,17 @@ mod tests {
             "AUTHORIZATION: Basic eC1hY2Nlc3MtdG9rZW46dG9rZW4="
         );
         assert!(environment.values().all(|value| !value.contains("token")));
+        let hosted = git_network_auth_for_token("https://github.com/owner/repo.git", "app-token")?;
+        assert_eq!(
+            hosted.environment["GIT_CONFIG_KEY_0"],
+            "http.https://github.com/.extraheader"
+        );
+        assert!(
+            hosted
+                .environment
+                .values()
+                .all(|value| !value.contains("app-token"))
+        );
         for (remote, token) in [
             ("git@github.com:owner/repo.git", "token"),
             ("https://example.com/owner/repo.git", "token"),

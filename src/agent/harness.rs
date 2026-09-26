@@ -7,18 +7,18 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::Value;
 
+use super::context::McpConfiguration;
 use super::process::execute;
 use super::{Harness, ProcessOutput, Usage};
-use crate::context::McpConfiguration;
 
 pub fn executable(harness: Harness) -> Result<PathBuf> {
     if harness == Harness::Command {
-        let arguments = split_command(&env::var("RADY_AGENT_COMMAND").unwrap_or_default())?;
+        let arguments = split_command(&env::var("KOELU_AGENT_COMMAND").unwrap_or_default())?;
         let first = arguments.first().ok_or_else(|| {
-            anyhow!("set RADY_AGENT_COMMAND to an installed non-interactive agent command")
+            anyhow!("set KOELU_AGENT_COMMAND to an installed non-interactive agent command")
         })?;
         return which(first).ok_or_else(|| {
-            anyhow!("set RADY_AGENT_COMMAND to an installed non-interactive agent command")
+            anyhow!("set KOELU_AGENT_COMMAND to an installed non-interactive agent command")
         });
     }
     let name = harness.as_str();
@@ -49,7 +49,7 @@ pub fn executable(harness: Harness) -> Result<PathBuf> {
         } else {
             "claude auth login"
         };
-        bail!("run {login} before using Rady");
+        bail!("run {login} before using Koelu");
     }
     Ok(binary)
 }
@@ -75,15 +75,10 @@ pub fn command(
         bail!("coding directory must be a directory");
     }
     if !(1..=8).contains(&agents) {
-        bail!("use between 1 and 8 Rady agents");
+        bail!("use between 1 and 8 Koelu agents");
     }
-    let binary = executable(harness)?;
     if harness == Harness::Command {
-        let setting = if read_only {
-            "RADY_REVIEW_COMMAND"
-        } else {
-            "RADY_AGENT_COMMAND"
-        };
+        let setting = command_setting(read_only);
         let arguments = split_command(&env::var(setting).unwrap_or_default())?;
         let (program, rest) = arguments
             .split_first()
@@ -95,6 +90,7 @@ pub fn command(
             arguments: rest.iter().map(OsString::from).collect(),
         });
     }
+    let binary = executable(harness)?;
     let mut arguments = Vec::<OsString>::new();
     if harness == Harness::Claude {
         let mcp_json = mcp.map_or_else(
@@ -224,13 +220,22 @@ pub fn run_cancellable(
             .arguments
             .extend(os_strings(&["--output-format", "json"]));
     }
+    let command_environment = if harness == Harness::Command {
+        command_environment(
+            environment,
+            env::var("KOELU_COMMAND_ALLOW_GEMINI").as_deref() == Ok("1"),
+            env::var("KOELU_GEMINI_API_KEY").ok(),
+        )?
+    } else {
+        environment.clone()
+    };
     let result = execute(
         &command.program,
         &command.arguments,
         directory,
         prompt.as_bytes(),
         timeout,
-        environment,
+        &command_environment,
         false,
         cancel_file,
     );
@@ -261,6 +266,37 @@ pub fn run_cancellable(
         usage.record(harness, values)?;
     }
     Ok(output)
+}
+
+const MAX_GEMINI_API_KEY_BYTES: usize = 1024;
+
+fn command_setting(read_only: bool) -> &'static str {
+    if read_only {
+        "KOELU_REVIEW_COMMAND"
+    } else {
+        "KOELU_AGENT_COMMAND"
+    }
+}
+
+fn command_environment(
+    environment: &BTreeMap<String, String>,
+    allow_gemini: bool,
+    gemini_api_key: Option<String>,
+) -> Result<BTreeMap<String, String>> {
+    let mut environment = environment.clone();
+    environment.remove("GEMINI_API_KEY");
+    if allow_gemini {
+        let key = gemini_api_key
+            .ok_or_else(|| anyhow!("KOELU_COMMAND_ALLOW_GEMINI requires KOELU_GEMINI_API_KEY"))?;
+        if key.is_empty()
+            || key.len() > MAX_GEMINI_API_KEY_BYTES
+            || key.chars().any(char::is_control)
+        {
+            bail!("KOELU_GEMINI_API_KEY is not safe to pass to the command harness");
+        }
+        environment.insert("GEMINI_API_KEY".to_owned(), key);
+    }
+    Ok(environment)
 }
 
 pub fn split_command(value: &str) -> Result<Vec<String>> {
@@ -430,6 +466,30 @@ mod tests {
             usage.and_then(|value| value.get("total_tokens").copied()),
             Some(5)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn command_paths_and_gemini_forwarding_are_explicit() -> Result<()> {
+        for (read_only, expected) in [
+            (false, "KOELU_AGENT_COMMAND"),
+            (true, "KOELU_REVIEW_COMMAND"),
+        ] {
+            assert_eq!(command_setting(read_only), expected);
+        }
+        for (allowed, key, forwards) in [
+            (false, Some("safe-key"), false),
+            (true, Some("safe-key"), true),
+        ] {
+            let environment = BTreeMap::from([("GEMINI_API_KEY".to_owned(), "ignored".to_owned())]);
+            let result = command_environment(&environment, allowed, key.map(ToOwned::to_owned))?;
+            assert_eq!(result.contains_key("GEMINI_API_KEY"), forwards);
+        }
+        for key in [None, Some(""), Some("line\nbreak")] {
+            assert!(
+                command_environment(&BTreeMap::new(), true, key.map(ToOwned::to_owned)).is_err()
+            );
+        }
         Ok(())
     }
 }

@@ -40,6 +40,8 @@ jobs:
           key: cargo-${{ runner.os }}-${{ steps.toolchain.outputs.version }}-${{ hashFiles('Cargo.lock') }}
       - name: Check formatting
         run: cargo fmt --check
+      - name: Check hosted harness boundary
+        run: bash .github/workflows/scripts/gemini-check.sh
       - name: Lint
         run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Test

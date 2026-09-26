@@ -1,0 +1,24 @@
+[[rule]]
+toolName = "run_shell_command"
+decision = "deny"
+priority = 999
+denyMessage = "Hosted editing permits file operations only."
+
+[[rule]]
+toolName = "google_web_search"
+decision = "deny"
+priority = 999
+denyMessage = "Hosted editing permits file operations only."
+
+[[rule]]
+toolName = "web_fetch"
+decision = "deny"
+priority = 999
+denyMessage = "Hosted editing permits file operations only."
+
+[[rule]]
+toolName = "*"
+mcpName = "*"
+decision = "deny"
+priority = 999
+denyMessage = "Hosted editing does not load MCP tools."
