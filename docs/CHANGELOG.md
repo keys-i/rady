@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (Koelu 0.6.10)
+## [0.6.10](https://github.com/keys-i/koelu/compare/v0.6.9...v0.6.10) (2026-09-27)
 
 - Prepare the repository move to `keys-i/koelu` and accept that name as the trusted solver source
 - Point setup, workflows, package metadata, the Homebrew tap, and current documentation to the new repository
