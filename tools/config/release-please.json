@@ -4,7 +4,7 @@
   "include-component-in-tag": false,
   "packages": {
     ".": {
-      "package-name": "rady",
+      "package-name": "pekin",
       "changelog-path": "docs/CHANGELOG.md"
     }
   }
