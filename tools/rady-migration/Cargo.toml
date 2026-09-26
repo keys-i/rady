@@ -9,6 +9,9 @@ readme = "README.md"
 repository = "https://github.com/keys-i/rady"
 publish = ["crates-io"]
 
+[package.metadata.maintenance]
+status = "deprecated"
+
 [[bin]]
 name = "rady"
 path = "src/main.rs"

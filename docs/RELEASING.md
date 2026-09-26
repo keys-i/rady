@@ -1,6 +1,6 @@
 # Releasing Koelu
 
-Koelu 0.6.9 is the first version under the new name. `Cargo.toml` and `Cargo.lock` describe that candidate; the release manifest remains at the last released version, 0.6.8, until Release Please advances it. Keep the crate, formula, changelog, and release tag aligned before publication.
+Koelu 0.6.9 is the first version under the new name. Keep the crate, release manifest, formula, changelog, and release tag aligned before publication.
 
 ## Cutover checks
 
@@ -16,4 +16,4 @@ Release Please normally creates the release pull request, tag, GitHub release, a
 
 Use **Actions → Release → Run workflow** only when the matching Koelu GitHub release and immutable `vX.Y.Z` tag already exist. The workflow checks out that tag, verifies its crate name and version, checks crates.io, and publishes only if that exact version is absent. Do not rebuild an older release from current source or move an existing tag.
 
-The [changelog](CHANGELOG.md) records the Rady and Pekin years under their original names. Existing `rady` and `pekin` crates do not automatically redirect users to Koelu; the Rady Homebrew formula is a migration notice, while the Pekin formula is removed. The [upgrade guide](UPGRADING.md) covers installed CLIs and repository consent.
+The [changelog](CHANGELOG.md) records the Rady releases under their original name. The unpublished Pekin candidate is included in Koelu 0.6.9. The notice-only `rady` crate and deprecated Homebrew formula point to Koelu; they do not automatically move installed CLIs or saved runs. The [upgrade guide](UPGRADING.md) covers installed CLIs and repository consent.

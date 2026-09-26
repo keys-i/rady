@@ -1,30 +1,28 @@
 # Changelog
 
-## Unreleased (Koelu 0.6.9)
+## [0.6.9](https://github.com/keys-i/rady/compare/v0.6.7...v0.6.9) (2026-09-27)
 
-- Rename the current crate, CLI, GitHub App mention, repository configuration, state paths, central secrets, Homebrew formula, and poster from Pekin to Koelu
-- Keep the duck mascot while taking the new name from the koel; leave Rady and Pekin names in historical release notes
+- Rename the crate, CLI, GitHub App mention, repository configuration, state paths, central secrets, Homebrew formula, and poster to Koelu
+- Keep the duck mascot while taking the new name from the koel
 - Require a new repository agreement under Terms `2026-09-27-t4` and Privacy `2026-09-27-p4` before hosted work resumes
-- Keep the Rady formula as a migration notice; there is no Pekin alias in the current tap, and local run evidence is not moved automatically
-
-## [0.6.8](https://github.com/keys-i/rady/compare/v0.6.7...v0.6.8) (2026-09-26)
+- Keep the Rady formula and crate as migration notices; Pekin was never published, and local run evidence is not moved automatically
 
 ### Features
 
-* allow an explicit `@pekin` write request to prepare an isolated branch and pull request after the same author approves its exact comment
+* allow an explicit `@koelu` write request to prepare an isolated branch and pull request after the same author approves its exact comment
 * run hosted code changes through a pinned, file-only Gemini CLI harness
 * checkpoint completed hosted work as progressive commits before opening one pull request
 
 ### Breaking changes
 
-* rename the product, crate, binary, App, mention, configuration, environment variables, state paths, and Homebrew formula to Pekin/`pekin` with no command alias
-* publish a notice-only `rady` crate and deprecate the old Homebrew formula with Pekin named as its replacement
-* require connected repositories to install the Pekin App and rerun `pekin setup`
+* rename the product, crate, binary, App, mention, configuration, environment variables, state paths, and Homebrew formula to Koelu/`koelu` with no command alias
+* publish a notice-only `rady` crate and deprecate the old Homebrew formula with Koelu named as its replacement
+* require connected repositories to install the Koelu App and rerun `koelu setup`
 
 ### Security
 
 * revalidate the request, approval, current author permission, and recorded base revision before dispatch
-* use a short-lived repository-scoped delivery token only for the approved write; Pekin never merges
+* use a short-lived repository-scoped delivery token only for the approved write; Koelu never merges
 * refuse repository-controlled Gemini configuration before the hosted harness starts
 * require renewed consent for the hosted provider-CLI file disclosure
 
