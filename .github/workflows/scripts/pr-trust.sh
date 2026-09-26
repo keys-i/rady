@@ -25,7 +25,7 @@ jq -e '
     .author_association == "MEMBER" or
     .author_association == "COLLABORATOR")
 ' <<<"$pull" > /dev/null || {
-  echo 'Rady runs only for same-repository Dependabot or trusted collaborator pull requests' >&2
+  echo 'Pekin runs only for same-repository Dependabot or trusted collaborator pull requests' >&2
   exit 0
 }
 {

@@ -1,4 +1,4 @@
-name: Rady dependasolve
+name: Pekin dependasolve
 
 on:
   workflow_call:
@@ -31,7 +31,7 @@ on:
         type: string
         default: ''
       model-choices:
-        description: Comma-separated native models available to Rady's local selector
+        description: Comma-separated native models available to Pekin's local selector
         type: string
         default: ''
       cloudflare-account-id:
@@ -82,7 +82,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: rady-${{ inputs.repo }}-${{ inputs.pr-number }}
+  group: pekin-${{ inputs.repo }}-${{ inputs.pr-number }}
   cancel-in-progress: true
 
 jobs:
@@ -125,7 +125,7 @@ jobs:
         with:
           repository: keys-i/rady
           ref: ${{ steps.source.outputs.sha }}
-          path: rady-workflow-scripts
+          path: pekin-workflow-scripts
           sparse-checkout: .github/workflows/scripts
           persist-credentials: false
       - name: Validate pull request trust boundary
@@ -136,7 +136,7 @@ jobs:
           GH_REPO: ${{ inputs.repo }}
           PRIVATE_REPOSITORY: ${{ inputs.repository-private }}
           PR_NUMBER: ${{ inputs.pr-number }}
-        run: bash rady-workflow-scripts/.github/workflows/scripts/validate-pr-trust.sh
+        run: bash pekin-workflow-scripts/.github/workflows/scripts/pr-trust.sh
 
   review:
     needs: preflight
@@ -163,10 +163,10 @@ jobs:
         if: inputs.repository-private != true
         shell: bash
         env:
-          RADY_HARNESS: ${{ inputs.harness }}
+          PEKIN_HARNESS: ${{ inputs.harness }}
         run: |
           set -euo pipefail
-          case "$RADY_HARNESS" in
+          case "$PEKIN_HARNESS" in
             codex|claude) ;;
             *) echo 'Public repositories require the bounded Codex or Claude harness' >&2; exit 1 ;;
           esac
@@ -190,7 +190,7 @@ jobs:
           ref: ${{ steps.source.outputs.sha }}
           persist-credentials: false
       - name: Build the trusted solver
-        run: cargo build --release --locked --bin rady
+        run: cargo build --release --locked --bin pekin
       - name: Resolve PR author and commit
         id: pr
         shell: bash
@@ -198,7 +198,7 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
-        run: target/release/rady agent resolve --repo "$GH_REPO" --pr "$PR_NUMBER"
+        run: target/release/pekin agent resolve --repo "$GH_REPO" --pr "$PR_NUMBER"
       - name: Recheck pull request identity
         shell: bash
         env:
@@ -222,34 +222,34 @@ jobs:
           GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           EXPECTED_HEAD: ${{ steps.pr.outputs.head }}
-        run: bash .github/workflows/scripts/fetch-pr-state.sh
+        run: bash .github/workflows/scripts/pr-state.sh
       - name: Review the diff and current CI evidence
         id: review
         shell: bash
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
-          RADY_MODEL: ${{ inputs.model }}
-          RADY_MODEL_CHOICES: ${{ inputs.model-choices }}
-          RADY_HARNESS: ${{ inputs.harness }}
-          RADY_REPOSITORY_PRIVATE: ${{ inputs.repository-private }}
-          RADY_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
-          RADY_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
-          RADY_XAI_API_KEY: ${{ secrets.xai-api-key }}
-          RADY_GROQ_API_KEY: ${{ secrets.groq-api-key }}
-          RADY_CLOUDFLARE_API_TOKEN: ${{ secrets.cloudflare-api-token }}
-          RADY_CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
-          RADY_OPENROUTER_API_KEY: ${{ secrets.openrouter-api-key }}
-          RADY_GEMINI_PRIVATE_OK: ${{ inputs.gemini-private-ok }}
-          RADY_CEREBRAS_PRIVATE_OK: ${{ inputs.cerebras-private-ok }}
-          RADY_XAI_PRIVATE_OK: ${{ inputs.xai-private-ok }}
-          RADY_GROQ_PRIVATE_OK: ${{ inputs.groq-private-ok }}
-          RADY_CLOUDFLARE_PRIVATE_OK: ${{ inputs.cloudflare-private-ok }}
-          RADY_OPENROUTER_PRIVATE_OK: ${{ inputs.openrouter-private-ok }}
+          PEKIN_MODEL: ${{ inputs.model }}
+          PEKIN_MODEL_CHOICES: ${{ inputs.model-choices }}
+          PEKIN_HARNESS: ${{ inputs.harness }}
+          PEKIN_REPOSITORY_PRIVATE: ${{ inputs.repository-private }}
+          PEKIN_GEMINI_API_KEY: ${{ secrets.gemini-api-key }}
+          PEKIN_CEREBRAS_API_KEY: ${{ secrets.cerebras-api-key }}
+          PEKIN_XAI_API_KEY: ${{ secrets.xai-api-key }}
+          PEKIN_GROQ_API_KEY: ${{ secrets.groq-api-key }}
+          PEKIN_CLOUDFLARE_API_TOKEN: ${{ secrets.cloudflare-api-token }}
+          PEKIN_CLOUDFLARE_ACCOUNT_ID: ${{ inputs.cloudflare-account-id }}
+          PEKIN_OPENROUTER_API_KEY: ${{ secrets.openrouter-api-key }}
+          PEKIN_GEMINI_PRIVATE_OK: ${{ inputs.gemini-private-ok }}
+          PEKIN_CEREBRAS_PRIVATE_OK: ${{ inputs.cerebras-private-ok }}
+          PEKIN_XAI_PRIVATE_OK: ${{ inputs.xai-private-ok }}
+          PEKIN_GROQ_PRIVATE_OK: ${{ inputs.groq-private-ok }}
+          PEKIN_CLOUDFLARE_PRIVATE_OK: ${{ inputs.cloudflare-private-ok }}
+          PEKIN_OPENROUTER_PRIVATE_OK: ${{ inputs.openrouter-private-ok }}
           GH_REPO: ${{ inputs.repo }}
           PR_NUMBER: ${{ needs.preflight.outputs.number }}
           REQUIRED_CHECKS: ${{ inputs.required-checks }}
           EXPECTED_HEAD: ${{ steps.pr-state.outputs.head }}
           UPDATE_TYPE: ${{ steps.pr.outputs.update_type }}
           MAINTAINER_CHANGES: ${{ steps.pr.outputs.maintainer_changes }}
-        run: target/release/rady agent review --repo "$GH_REPO" --pr "$PR_NUMBER"
+        run: target/release/pekin agent review --repo "$GH_REPO" --pr "$PR_NUMBER"
