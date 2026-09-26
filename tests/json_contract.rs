@@ -12,7 +12,7 @@ fn json_contract_reaches_the_process_boundary() {
                 "code",
                 "change",
                 "--directory",
-                "/.rady-json-contract-no-project",
+                "/.pekin-json-contract-no-project",
             ]
             .as_slice(),
             1,
@@ -26,10 +26,10 @@ fn json_contract_reaches_the_process_boundary() {
             "required arguments",
         ),
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_rady"))
+        let output = Command::new(env!("CARGO_BIN_EXE_pekin"))
             .args(arguments)
             .output()
-            .expect("Rady must start");
+            .expect("Pekin must start");
         assert_eq!(output.status.code(), Some(exit_code));
         assert!(output.stdout.is_empty());
         let document: Value =
@@ -45,7 +45,7 @@ fn json_contract_reaches_the_process_boundary() {
     }
 
     let directory = tempfile::tempdir().expect("temporary setup directory");
-    let output = Command::new(env!("CARGO_BIN_EXE_rady"))
+    let output = Command::new(env!("CARGO_BIN_EXE_pekin"))
         .args([
             "--output",
             "json",
@@ -60,7 +60,7 @@ fn json_contract_reaches_the_process_boundary() {
             directory.path().to_str().expect("UTF-8 temporary path"),
         ])
         .output()
-        .expect("Rady must produce a setup preview");
+        .expect("Pekin must produce a setup preview");
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let document: Value =

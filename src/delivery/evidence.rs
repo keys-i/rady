@@ -12,8 +12,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::quality;
 use crate::Result;
-use crate::quality;
 
 use super::git::git;
 use super::hex;

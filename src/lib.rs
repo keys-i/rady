@@ -1,21 +1,15 @@
 pub mod agent;
-pub mod apps;
-pub mod benchmark;
 pub mod cli;
-mod code_command;
-pub mod context;
 pub mod delivery;
 pub mod github;
-pub mod mentions;
-pub mod model;
-pub mod quality;
-pub mod repair;
-pub mod reviews;
-pub mod routing;
 pub mod runs;
-mod service;
-pub mod session;
-pub mod setup;
 pub mod ui;
+
+// Keep existing public paths while grouping implementation by domain
+pub use agent::{context, routing, session};
+pub use delivery::{benchmark, quality};
+pub use github::apps;
+pub use github::{mentions, reviews, setup};
+pub use reviews::{model, repair};
 
 pub type Result<T> = anyhow::Result<T>;

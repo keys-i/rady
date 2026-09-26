@@ -1,8 +1,8 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
-    match rady::cli::run() {
+    match pekin::cli::run() {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => rady::cli::error_exit(error),
+        Err(error) => pekin::cli::error_exit(error),
     }
 }

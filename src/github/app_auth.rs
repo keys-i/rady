@@ -15,7 +15,7 @@ use crate::github::validate_repository;
 
 const APP_API_BASE: &str = "https://api.github.com/";
 const APP_API_TIMEOUT: Duration = Duration::from_secs(30);
-const HTTP_STATUS_MARKER: &str = "\nRADY_HTTP_STATUS:";
+const HTTP_STATUS_MARKER: &str = "\nPEKIN_HTTP_STATUS:";
 const MAX_APP_API_RESPONSE_BYTES: usize = 1_000_000;
 const MAX_APP_INSTALLATIONS: usize = 256;
 const MAX_INSTALLATION_SCAN: usize = 1_024;
@@ -24,6 +24,7 @@ const MAX_INSTALLATION_SCAN: usize = 1_024;
 pub(crate) enum InstallationTokenScope {
     Mentions,
     Targets,
+    Delivery,
 }
 
 pub(crate) fn mint_installation_tokens(
@@ -34,7 +35,7 @@ pub(crate) fn mint_installation_tokens(
     installation_seed: usize,
 ) -> Result<Vec<String>> {
     if let Some(owner) = owner {
-        validate_repository(&format!("{owner}/rady"))?;
+        validate_repository(&format!("{owner}/pekin"))?;
     }
     let key = app_signing_key(private_key_pem)?;
     let request = service_token_request(scope);
@@ -48,6 +49,40 @@ pub(crate) fn mint_installation_tokens(
             installation_token(&response)
         })
         .collect()
+}
+
+/// Mint a write token for exactly one installed repository
+pub(crate) fn mint_repository_installation_token(
+    private_key_pem: &str,
+    issuer: &str,
+    repository: &str,
+) -> Result<String> {
+    validate_repository(repository)?;
+    let (owner, repository_name) = repository
+        .split_once('/')
+        .ok_or_else(|| anyhow!("use an explicit OWNER/REPO"))?;
+    let key = app_signing_key(private_key_pem)?;
+    let jwt = current_app_jwt(&key, issuer)?;
+    let installation = app_api(
+        &format!("repos/{owner}/{repository_name}/installation"),
+        None,
+        "GET",
+        false,
+        Some(&jwt),
+    )?
+    .ok_or_else(|| anyhow!("GitHub returned no repository installation"))?;
+    let installation = installation_id(&installation)?;
+    let request = repository_token_request(repository_name);
+    let jwt = current_app_jwt(&key, issuer)?;
+    let response = app_api(
+        &format!("app/installations/{installation}/access_tokens"),
+        Some(&request),
+        "POST",
+        false,
+        Some(&jwt),
+    )?
+    .ok_or_else(|| anyhow!("GitHub returned no repository installation token"))?;
+    installation_token(&response)
 }
 
 pub(crate) fn authenticated_app(private_key_pem: &str, issuer: &str) -> Result<Value> {
@@ -78,8 +113,21 @@ fn service_token_request(scope: InstallationTokenScope) -> Value {
             "issues": "read",
             "pull_requests": "read"
         }),
+        InstallationTokenScope::Delivery => serde_json::json!({
+            "checks": "read",
+            "contents": "write",
+            "issues": "write",
+            "pull_requests": "write",
+            "statuses": "read"
+        }),
     };
     serde_json::json!({"permissions": permissions})
+}
+
+fn repository_token_request(repository: &str) -> Value {
+    let mut request = service_token_request(InstallationTokenScope::Delivery);
+    request["repositories"] = serde_json::json!([repository]);
+    request
 }
 
 fn app_signing_key(private_key_pem: &str) -> Result<RsaKeyPair> {
@@ -205,7 +253,7 @@ fn app_installation_ids(
         let complete = append_installation_page(&mut ids, &response)?;
         if ids.len() >= MAX_INSTALLATION_SCAN {
             eprintln!(
-                "RadDuck found more than {MAX_INSTALLATION_SCAN} installations; rotating through the first {MAX_INSTALLATION_SCAN}"
+                "Pekin found more than {MAX_INSTALLATION_SCAN} installations; rotating through the first {MAX_INSTALLATION_SCAN}"
             );
             break;
         }
@@ -240,7 +288,7 @@ fn app_api(
     missing: bool,
     jwt: Option<&str>,
 ) -> Result<Option<Value>> {
-    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect RadDuck"))?;
+    let curl = agent::which("curl").ok_or_else(|| anyhow!("install curl to connect Pekin"))?;
     let payload = payload.map(serde_json::to_string).transpose()?;
     let arguments = app_api_arguments(method, endpoint, payload.as_deref(), jwt.is_some());
     let authorization = jwt.map(app_authorization).unwrap_or_default();
@@ -287,7 +335,7 @@ fn app_api_arguments(
         "--header".to_owned(),
         "X-GitHub-Api-Version: 2022-11-28".to_owned(),
         "--header".to_owned(),
-        "User-Agent: Rady".to_owned(),
+        "User-Agent: Pekin".to_owned(),
     ];
     if authenticated {
         arguments.extend(["--header".to_owned(), "@-".to_owned()]);
@@ -330,18 +378,18 @@ fn app_api_response(code: i32, output: &str, missing: bool) -> Result<Option<Str
     }
     if code != 0 || !(200..300).contains(&status) {
         let message = match (code, status) {
-            (6, _) => "Rady couldn't resolve api.github.com".to_owned(),
-            (7, _) => "Rady couldn't connect to GitHub".to_owned(),
+            (6, _) => "Pekin couldn't resolve api.github.com".to_owned(),
+            (7, _) => "Pekin couldn't connect to GitHub".to_owned(),
             (28, _) => "GitHub took too long to respond".to_owned(),
             (63, _) => format!(
                 "GitHub returned more than {MAX_APP_API_RESPONSE_BYTES} bytes; narrow the request"
             ),
-            (_, 401) => "GitHub didn't accept RadDuck's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
-            (_, 403) => "GitHub wouldn't allow this App request (403); check RadDuck's permissions and installation".to_owned(),
-            (_, 404) => "GitHub couldn't find this App resource (404); check the RadDuck installation".to_owned(),
+            (_, 401) => "GitHub didn't accept Pekin's App credentials (401); check that the client ID and private key belong to the same App".to_owned(),
+            (_, 403) => "GitHub wouldn't allow this App request (403); check Pekin's permissions and installation".to_owned(),
+            (_, 404) => "GitHub couldn't find this App resource (404); check the Pekin installation".to_owned(),
             (_, 429) => "GitHub's rate limit is full (429); try again after it resets".to_owned(),
             _ if status != 0 => format!("GitHub rejected the App request (HTTP {status})"),
-            _ => format!("Rady couldn't reach GitHub (transport {code})"),
+            _ => format!("Pekin couldn't reach GitHub (transport {code})"),
         };
         bail!(message);
     }
@@ -459,6 +507,20 @@ mod tests {
             targets["permissions"].as_object().map(|value| value.len()),
             Some(4)
         );
+        let delivery = repository_token_request("pekin");
+        assert_eq!(
+            delivery,
+            serde_json::json!({
+                "repositories": ["pekin"],
+                "permissions": {
+                    "checks": "read",
+                    "contents": "write",
+                    "issues": "write",
+                    "pull_requests": "write",
+                    "statuses": "read"
+                }
+            })
+        );
 
         for (pem, expected) in [
             (
@@ -550,7 +612,7 @@ mod tests {
             );
         }
 
-        let public_arguments = app_api_arguments("GET", "apps/radduck", None, false);
+        let public_arguments = app_api_arguments("GET", "apps/pekin", None, false);
         assert!(
             !public_arguments
                 .windows(2)
@@ -558,12 +620,12 @@ mod tests {
         );
         assert_eq!(
             public_arguments.last().map(String::as_str),
-            Some("https://api.github.com/apps/radduck")
+            Some("https://api.github.com/apps/pekin")
         );
 
         for (code, response, missing, expected) in [
-            (0, "[]\nRADY_HTTP_STATUS:200", false, Some("[]")),
-            (22, "hidden\nRADY_HTTP_STATUS:404", true, None),
+            (0, "[]\nPEKIN_HTTP_STATUS:200", false, Some("[]")),
+            (22, "hidden\nPEKIN_HTTP_STATUS:404", true, None),
         ] {
             assert_eq!(
                 app_api_response(code, response, missing)
@@ -572,10 +634,10 @@ mod tests {
                 expected
             );
         }
-        let error = app_api_response(22, "hidden\nRADY_HTTP_STATUS:401", false)
+        let error = app_api_response(22, "hidden\nPEKIN_HTTP_STATUS:401", false)
             .unwrap_err()
             .to_string();
-        assert!(error.contains("didn't accept RadDuck's App credentials"));
+        assert!(error.contains("didn't accept Pekin's App credentials"));
         assert!(!error.contains("hidden"));
     }
 }

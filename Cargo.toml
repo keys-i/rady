@@ -1,6 +1,6 @@
 [package]
-name = "rady"
-version = "0.6.7"
+name = "pekin"
+version = "0.6.8"
 edition = "2024"
 rust-version = "1.85"
 description = "Checked coding changes, dependency reviews, and local-first agent workflows"
@@ -11,23 +11,30 @@ keywords = ["coding-agent", "dependabot", "dependency-review", "cli", "developer
 categories = ["command-line-utilities", "development-tools"]
 publish = ["crates-io"]
 include = [
+    "/.github/CODE_OF_CONDUCT.md",
+    "/.github/CONTRIBUTING.md",
+    "/.github/PULL_REQUEST_TEMPLATE.md",
+    "/.github/SECURITY.md",
     "/.github/workflows/orchestrate.yml",
     "/.github/workflows/solve.yml",
-    "/.github/workflows/scripts/fetch-pr-state.sh",
-    "/.github/workflows/scripts/validate-pr-trust.sh",
+    "/.github/workflows/scripts/gemini-policy.toml",
+    "/.github/workflows/scripts/gemini.sh",
+    "/.github/workflows/scripts/pr-state.sh",
+    "/.github/workflows/scripts/pr-trust.sh",
     "/docs/*.md",
-    "/docs/assets/rady-poster.webp",
+    "/docs/assets/pekin-poster.webp",
+    "/assets/pekin-app-duck.png",
     "/src/*.rs",
+    "/src/cli/*.rs",
     "/src/agent/*.rs",
     "/src/delivery/*.rs",
     "/src/github/*.rs",
-    "/src/mentions/*.rs",
-    "/src/mentions/providers/*.rs",
-    "/src/reviews/*.rs",
-    "/src/routing/*.rs",
-    "/src/service/*.rs",
-    "/src/setup/*.rs",
-    "/src/rady_ui/assets/*.png",
+    "/src/github/mentions/*.rs",
+    "/src/github/mentions/providers/*.rs",
+    "/src/github/reviews/*.rs",
+    "/src/github/service/*.rs",
+    "/src/github/setup/*.rs",
+    "/src/ui/*.rs",
     "/tests/*.rs",
     "/Cargo.lock",
     "/LICENSE",
@@ -58,5 +65,5 @@ strip = true
 unsafe_code = "deny"
 
 [[bin]]
-name = "rady"
+name = "pekin"
 path = "src/main.rs"

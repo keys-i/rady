@@ -15,8 +15,8 @@ use serde::de::DeserializeOwned;
 
 use crate::Result;
 
-const RUNS_DIRECTORY: &str = "RADY_RUNS_DIR";
-const MEMORY_DIRECTORY: &str = "RADY_MEMORY_DIR";
+const RUNS_DIRECTORY: &str = "PEKIN_RUNS_DIR";
+const MEMORY_DIRECTORY: &str = "PEKIN_MEMORY_DIR";
 const CANCELLED: &str = "cancelled";
 const MAX_LISTED_RUNS: usize = 100;
 
@@ -54,7 +54,7 @@ impl RunStore {
         }
         let metadata = fs::symlink_metadata(&root)?;
         if !metadata.is_dir() {
-            bail!("Rady run root is not a directory: {}", root.display());
+            bail!("Pekin run root is not a directory: {}", root.display());
         }
         Ok(Self { root })
     }
@@ -73,14 +73,14 @@ impl RunStore {
                 Err(error) => return Err(error.into()),
             }
         }
-        bail!("could not allocate a unique Rady run ID")
+        bail!("could not allocate a unique Pekin run ID")
     }
 
     pub fn load(&self, id: &str) -> Result<Run> {
         validate_id(id)?;
         let path = self.root.join(id);
         if !fs::symlink_metadata(&path).is_ok_and(|metadata| metadata.is_dir()) {
-            bail!("Rady run does not exist: {id}");
+            bail!("Pekin run does not exist: {id}");
         }
         Ok(Run {
             id: id.to_owned(),
@@ -134,7 +134,7 @@ impl Run {
         let path = self.file(name)?;
         let metadata = fs::symlink_metadata(&path)?;
         if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 1_000_000 {
-            bail!("Rady run JSON must be a regular file no larger than 1 MB");
+            bail!("Pekin run JSON must be a regular file no larger than 1 MB");
         }
         Ok(serde_json::from_slice(&fs::read(path)?)?)
     }
@@ -147,7 +147,7 @@ impl Run {
         let path = self.file(name)?;
         let metadata = fs::symlink_metadata(&path)?;
         if !metadata.is_file() || metadata.file_type().is_symlink() || metadata.len() > 4_000_000 {
-            bail!("Rady run text must be a regular file no larger than 4 MB");
+            bail!("Pekin run text must be a regular file no larger than 4 MB");
         }
         Ok(fs::read_to_string(path)?)
     }
@@ -159,7 +159,7 @@ impl Run {
     pub fn is_cancelled(&self) -> Result<bool> {
         match fs::symlink_metadata(self.file(CANCELLED)?) {
             Ok(metadata) if metadata.is_file() && !metadata.file_type().is_symlink() => Ok(true),
-            Ok(_) => bail!("Rady cancellation marker is not a regular file"),
+            Ok(_) => bail!("Pekin cancellation marker is not a regular file"),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error.into()),
         }
@@ -172,7 +172,7 @@ impl Run {
                 .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         {
             bail!(
-                "Rady run file names may contain only letters, numbers, dots, underscores and hyphens"
+                "Pekin run file names may contain only letters, numbers, dots, underscores and hyphens"
             );
         }
         Ok(self.path.join(name))
@@ -192,7 +192,7 @@ fn memory_root() -> PathBuf {
         return PathBuf::from(root);
     }
     default_root().parent().map_or_else(
-        || env::temp_dir().join("rady-memory"),
+        || env::temp_dir().join("pekin-memory"),
         |root| root.join("memory"),
     )
 }
@@ -205,20 +205,20 @@ where
         return PathBuf::from(root);
     }
     if let Some(root) = variable("XDG_STATE_HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(root).join("rady").join("runs");
+        return PathBuf::from(root).join("pekin").join("runs");
     }
     if let Some(home) = variable("HOME").filter(|value| !value.is_empty()) {
-        return PathBuf::from(home).join(".local/state/rady/runs");
+        return PathBuf::from(home).join(".local/state/pekin/runs");
     }
     if let Some(root) = variable("LOCALAPPDATA").filter(|value| !value.is_empty()) {
-        return PathBuf::from(root).join("Rady").join("runs");
+        return PathBuf::from(root).join("Pekin").join("runs");
     }
-    temporary.join("rady-runs")
+    temporary.join("pekin-runs")
 }
 
 fn new_id() -> Result<String> {
     let mut bytes = [0_u8; 16];
-    fill(&mut bytes).map_err(|error| anyhow!("could not generate Rady run ID: {error}"))?;
+    fill(&mut bytes).map_err(|error| anyhow!("could not generate Pekin run ID: {error}"))?;
     Ok(format!("run_{}", hex(&bytes)))
 }
 
@@ -231,7 +231,7 @@ fn validate_id(id: &str) -> Result<()> {
     {
         return Ok(());
     }
-    bail!("invalid Rady run ID")
+    bail!("invalid Pekin run ID")
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -247,7 +247,7 @@ fn hex(bytes: &[u8]) -> String {
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path
         .parent()
-        .ok_or_else(|| anyhow!("Rady run file has no parent directory"))?;
+        .ok_or_else(|| anyhow!("Pekin run file has no parent directory"))?;
     for _ in 0..32 {
         let temporary = parent.join(format!(
             ".{}.tmp-{}",
@@ -276,7 +276,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         }
         return outcome;
     }
-    bail!("could not allocate an atomic Rady run write")
+    bail!("could not allocate an atomic Pekin run write")
 }
 
 #[cfg(target_os = "linux")]
@@ -384,10 +384,10 @@ mod tests {
     #[test]
     fn selects_override_without_mutating_process_environment() {
         let variables = BTreeMap::from([(
-            "RADY_RUNS_DIR".to_owned(),
-            OsString::from("/custom/rady-runs"),
+            "PEKIN_RUNS_DIR".to_owned(),
+            OsString::from("/custom/pekin-runs"),
         )]);
         let root = root_from(|name| variables.get(name).cloned(), "/temporary".into());
-        assert_eq!(root, std::path::PathBuf::from("/custom/rady-runs"));
+        assert_eq!(root, std::path::PathBuf::from("/custom/pekin-runs"));
     }
 }
