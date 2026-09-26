@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.6.8](https://github.com/keys-i/rady/compare/v0.6.7...v0.6.8) (2026-09-26)
+
+### Features
+
+* allow an explicit `@pekin` write request to prepare an isolated branch and pull request after the same author approves its exact comment
+* run hosted code changes through a pinned, file-only Gemini CLI harness
+* checkpoint completed hosted work as progressive commits before opening one pull request
+
+### Breaking changes
+
+* rename the product, crate, binary, App, mention, configuration, environment variables, state paths, and Homebrew formula to Pekin/`pekin` with no command alias
+* require connected repositories to install the Pekin App and rerun `pekin setup`
+
+### Security
+
+* revalidate the request, approval, current author permission, and recorded base revision before dispatch
+* use a short-lived repository-scoped delivery token only for the approved write; Pekin never merges
+* refuse repository-controlled Gemini configuration before the hosted harness starts
+* require renewed consent for the hosted provider-CLI file disclosure
+
+### Recovery
+
+* post a terminal result for every claimed dispatch and never retry a claimed approval automatically
+* stop on invalid approval, changed access or base, cancellation, or failed checks without changing the default branch; retry with a fresh request and approval
+
 ## [0.6.7](https://github.com/keys-i/rady/compare/v0.6.6...v0.6.7) (2026-09-25)
 
 ### Changes
@@ -96,7 +121,22 @@
 
 ## [0.5.8](https://github.com/keys-i/rady/compare/v0.5.7...v0.5.8) (2026-09-22)
 
-
 ### Bug Fixes
 
 * validate App access centrally ([7d5e65b](https://github.com/keys-i/rady/commit/7d5e65b0b2924109f033af17113c125f8d4f3576))
+
+## Earlier Rady releases (0.1.0–0.5.7)
+
+This is a compact history of the recorded early versions, drawn from their packaged README and upgrade guides. It names milestones visible in those artifacts, not invented patch notes. Missing version numbers are not implied releases; old names and permissions below are historical, not setup advice for Pekin 0.6.8.
+
+| Versions | What the packaged documentation establishes |
+| --- | --- |
+| 0.1.0 | The native Rust `rady` CLI combined checked local code changes and Dependabot review. It retained JSON and HTML evidence and used an existing Codex or Claude Code login. |
+| 0.1.5, 0.1.6, 0.1.7 | The 0.1.x line added default-branch source pinning and a guarded path for same-repository public Dependabot reviews. The packaged guides do not distinguish these three patch releases. |
+| 0.2.0, 0.2.1 | Rady moved from separate review Apps to one Rady App, and the interface adopted the duck identity. The packaged guides do not distinguish the patch release. |
+| 0.3.1, 0.3.5 | By 0.3.5, the CLI had the `rady agent` command group, guarded read-only `@radyybot` replies, broader trusted same-repository review, and a separate replacement-PR path for eligible conflicted Dependabot updates. |
+| 0.4.2 | Mention replies gained a Gemini/Cerebras route; native work gained bounded task decomposition and model selection. |
+| 0.5.2, 0.5.3, 0.5.4 | By 0.5.2, mentions preferred a local Codex login when present and used Gemini-first hosted fallbacks otherwise, with optional xAI routing. The available guides do not assign a separate change to each patch. |
+| 0.5.5, 0.5.6, 0.5.7 | By 0.5.7, the central `keys-i/rady` service held App and model credentials, recorded repository consent, and answered read-only mentions. The available guides do not assign a separate change to each patch. |
+
+For an upgrade from any of these versions, use the [current Pekin guide](UPGRADING.md); do not replay historical setup instructions.
